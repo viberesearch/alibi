@@ -156,6 +156,7 @@ def test_upload_provenance(db: DatabaseManager):
     from pathlib import Path
 
     import os
+
     inbox = os.environ.get("ALIBI_TEST_INBOX", "./tests/fixtures/inbox")
     test_image = Path(inbox) / "receipts" / "fresko" / "IMG_0430 Medium.jpeg"
     if not test_image.exists():
