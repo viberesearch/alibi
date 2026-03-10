@@ -1,0 +1,99 @@
+[project]
+name = "alibi"
+version = "0.1.0"
+description = "Local-first financial document intelligence with adaptive learning"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "rich>=13.0.0",
+    "pdfplumber>=0.10.0",
+    "python-dotenv>=1.0.0",
+    "imagehash>=4.3.2",
+    "httpx>=0.28.1",
+    "pillow>=12.1.1",
+    "watchdog>=6.0.0",
+    "ofxparse>=0.21",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "mcp>=1.9.0",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+lt = "alibi.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alibi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "integration: live integration tests requiring a running API server",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = false  # Disabled due to pre-commit hook using --ignore-missing-imports
+exclude = ["scripts/", "tests/"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[project.optional-dependencies]
+telegram = [
+    "aiogram>=3.23.0",
+]
+gemini = [
+    "google-genai>=1.64.0",
+]
+vector = [
+    "lancedb>=0.26.0",
+]
+barcode = [
+    "pyzbar>=0.1.9",
+]
+pdf = [
+    "pdf2image>=1.17.0",
+]
+ocr = [
+    "python-doctr>=1.0.1",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+]
+all = ["alibi[telegram,gemini,vector,barcode,pdf,ocr]"]
+
+# NOTE: surya-ocr integration at alibi/extraction/surya_ocr.py is blocked
+# by pillow conflict (surya requires <11.0.0, alibi uses >=12.0.0).
+# python-doctr is the active OCR backend (no pillow conflict).
+
+[dependency-groups]
+dev = [
+    "black>=25.12.0",
+    "flake8>=7.3.0",
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.28.1",
+    "types-pyyaml>=6.0.12.20250915",
+]

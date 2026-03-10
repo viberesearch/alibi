@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+authors:
+  - family-names: Zharnikov
+    given-names: Dmitry
+    email: dmitry@spectralbranding.com
+title: "Alibi: Local-First Financial Document Intelligence"
+version: 1.0.0
+date-released: 2026-03-10
+url: "https://github.com/viberesearch/alibi"
+repository-code: "https://github.com/viberesearch/alibi"
+keywords:
+  - financial documents
+  - receipt processing
+  - OCR
+  - document intelligence
+  - atom-cloud-fact
+license: MIT
+type: software
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Zharnikov
+      given-names: Dmitry
+      email: dmitry@spectralbranding.com
+  title: "The alibi problem: Epistemic foundations of multi-source data reconciliation"
+  year: 2026
+  url: "https://github.com/spectralbranding/sbt-papers"

@@ -1,0 +1,53 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Pull OCR model on first run:
+    #   docker compose exec ollama ollama pull glm-ocr
+
+  alibi-api:
+    build: .
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - ALIBI_DB_PATH=/app/data/alibi.db
+      - ALIBI_OLLAMA_URL=http://ollama:11434
+    depends_on:
+      - ollama
+
+  alibi-watcher:
+    build: .
+    command: ["uv", "run", "lt", "process", "--watch"]
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ALIBI_DB_PATH=/app/data/alibi.db
+      - ALIBI_INBOX_PATH=/app/data/inbox
+      - ALIBI_OLLAMA_URL=http://ollama:11434
+    depends_on:
+      - ollama
+
+  # Optional: Telegram bot (uncomment and set env vars)
+  # alibi-telegram:
+  #   build: .
+  #   command: ["uv", "run", "lt", "telegram", "start"]
+  #   volumes:
+  #     - ./data:/app/data
+  #   environment:
+  #     - ALIBI_DB_PATH=/app/data/alibi.db
+  #     - ALIBI_OLLAMA_URL=http://ollama:11434
+  #     - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+  #     - ALIBI_TELEGRAM_ALLOWED_USERS=${ALIBI_TELEGRAM_ALLOWED_USERS}
+  #   depends_on:
+  #     - ollama
+
+volumes:
+  ollama_data:

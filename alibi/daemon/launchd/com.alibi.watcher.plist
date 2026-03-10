@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Replace $ALIBI_DIR with your alibi installation path, e.g. /Users/yourname/projects/alibi -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alibi.watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$ALIBI_DIR/.venv/bin/python</string>
+        <string>-m</string>
+        <string>alibi.daemon.watcher_service</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>$ALIBI_DIR</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>$HOME/.alibi/watcher.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$HOME/.alibi/watcher.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

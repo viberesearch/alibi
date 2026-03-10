@@ -1,0 +1,20 @@
+[flake8]
+# Line length: 120 for legacy code compatibility (Black uses 88 for formatting)
+max-line-length = 120
+# Extended ignores for legacy codebases:
+# E203: whitespace before ':' (conflicts with Black)
+# E302: expected 2 blank lines
+# E402: module level import not at top of file
+# E501: line too long (handled by max-line-length)
+# E722: bare except
+# C901: too complex
+# F401: imported but unused
+# F541: f-string without placeholders
+# F811: redefinition of unused name
+# F841: local variable assigned but never used
+# W291: trailing whitespace
+# W293: blank line contains whitespace
+# W503: line break before binary operator
+extend-ignore = E203,E302,E402,E501,E722,C901,F401,F541,F811,F841,W291,W293,W503
+exclude = .git,__pycache__,docs,old,build,dist,.venv,venv,.env,archive,ARCHIVE,node_modules,alembic,migrations
+max-complexity = 15
