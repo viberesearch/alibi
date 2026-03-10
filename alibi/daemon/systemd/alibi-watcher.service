@@ -1,0 +1,23 @@
+[Unit]
+Description=Alibi Document Watcher
+After=network.target
+
+[Service]
+Type=simple
+# Update paths below for your installation
+User=%u
+# Replace /path/to/alibi with your alibi project directory
+WorkingDirectory=/path/to/alibi
+ExecStart=/path/to/alibi/.venv/bin/python -m alibi.daemon.watcher_service
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

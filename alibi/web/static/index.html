@@ -1,0 +1,2919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alibi &mdash; User Management</title>
+<style>
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0f1117;
+  --card: #1a1d27;
+  --card-hover: #1f2235;
+  --border: #2a2d3a;
+  --accent: #6366f1;
+  --accent-hover: #5254cc;
+  --accent-muted: rgba(99, 102, 241, 0.15);
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --danger-muted: rgba(239, 68, 68, 0.12);
+  --success: #22c55e;
+  --success-muted: rgba(34, 197, 94, 0.12);
+  --warning: #f59e0b;
+  --warning-muted: rgba(245, 158, 11, 0.12);
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+a:hover { color: var(--accent-hover); }
+
+/* Layout */
+.app-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.app-logo {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+}
+
+.app-logo span {
+  color: var(--accent);
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.nav-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.nav-btn:hover { background: var(--accent-muted); color: var(--text); }
+
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px 24px 60px;
+}
+
+/* Cards */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.card-body {
+  padding: 20px;
+}
+
+/* Stats grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+
+.stat-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: #3a3d4a;
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-muted);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: transparent;
+  padding: 5px 8px;
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--accent-muted);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.btn-icon {
+  padding: 5px 7px;
+  font-size: 14px;
+}
+
+/* Table */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+thead th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+tbody tr {
+  transition: background 0.1s;
+  cursor: pointer;
+}
+tbody tr:hover { background: var(--card-hover); }
+tbody tr:last-child td { border-bottom: none; }
+
+tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.badge-success { background: var(--success-muted); color: var(--success); }
+.badge-danger  { background: var(--danger-muted); color: var(--danger); }
+.badge-muted   { background: rgba(100, 116, 139, 0.12); color: var(--muted); }
+.badge-accent  { background: var(--accent-muted); color: var(--accent); }
+
+/* Forms */
+.form-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+
+.form-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.form-input, .form-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+.form-input:focus, .form-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+.form-input::placeholder { color: var(--muted); }
+
+.form-select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+/* Inline edit */
+.inline-edit-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-edit-display {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: text;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+  line-height: 1.3;
+}
+.inline-edit-display:hover {
+  border-color: var(--border);
+  background: var(--card-hover);
+}
+
+.inline-edit-input {
+  font-size: 20px;
+  font-weight: 700;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 3px 6px;
+  font-family: inherit;
+  line-height: 1.3;
+  min-width: 200px;
+}
+.inline-edit-input:focus { outline: none; }
+
+/* Section */
+.section {
+  margin-bottom: 24px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 10px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+
+/* Contact & Key list items */
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  margin-bottom: 6px;
+  transition: background 0.1s;
+}
+.list-item:last-child { margin-bottom: 0; }
+.list-item:hover { background: rgba(255,255,255,0.02); }
+
+.list-item-icon {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-muted);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+.list-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-item-primary {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-item-secondary {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.list-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Mnemonic box */
+.mnemonic-box {
+  background: var(--warning-muted);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 12px 0;
+}
+
+.mnemonic-warning {
+  font-size: 12px;
+  color: var(--warning);
+  font-weight: 600;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mnemonic-value {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  word-break: break-all;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  position: relative;
+  user-select: all;
+  line-height: 1.6;
+}
+.mnemonic-value:hover { border-color: var(--accent); }
+.mnemonic-value.copied {
+  border-color: var(--success);
+  background: var(--success-muted);
+}
+
+.mnemonic-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+/* Toast */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  max-width: 340px;
+  pointer-events: auto;
+  transform: translateX(120%);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toast.show { transform: translateX(0); }
+
+.toast-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.toast-success .toast-dot { background: var(--success); }
+.toast-error   .toast-dot { background: var(--danger); }
+.toast-info    .toast-dot { background: var(--accent); }
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.spinner-lg {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.empty-state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.empty-action {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 7px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.empty-action:hover { background: var(--accent-hover); color: #fff; }
+
+/* Responsive tables */
+.table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Separator */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0;
+}
+
+/* Page-level heading row */
+.page-heading {
+  display: flex;
+  align-items: center;
+  margin-bottom: 24px;
+  gap: 12px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+}
+
+/* Back link */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--muted);
+  transition: color 0.15s;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+.back-link:hover { color: var(--text); }
+
+/* Health dot */
+.health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.health-dot.ok  { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.health-dot.err { background: var(--danger);  box-shadow: 0 0 6px var(--danger); }
+
+/* Confirm dialog */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.confirm-overlay.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.confirm-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  max-width: 360px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  transform: scale(0.95);
+  transition: transform 0.2s;
+}
+.confirm-overlay.show .confirm-dialog { transform: scale(1); }
+
+.confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.confirm-body {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Mono text */
+.mono {
+  font-family: "SF Mono", "Fira Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .main { padding: 16px 12px 40px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-row { flex-direction: column; }
+}
+
+/* Views (hide/show) */
+.view { display: none; }
+.view.active { display: block; }
+
+/* 401 notice */
+.api-key-notice {
+  background: var(--warning-muted);
+  border: 1px solid rgba(245,158,11,0.25);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--warning);
+  margin-bottom: 20px;
+  display: none;
+}
+
+/* Key prefix */
+.key-prefix {
+  font-family: "SF Mono", "Fira Code", Consolas, monospace;
+  font-size: 12px;
+  background: rgba(99,102,241,0.1);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Enrichment confidence colors */
+.conf-low  { color: var(--danger);  font-weight: 600; }
+.conf-med  { color: var(--warning); font-weight: 600; }
+.conf-high { color: var(--muted); }
+
+/* Enrichment confirm inline form */
+.enrich-confirm-row {
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.enrich-confirm-row td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.enrich-confirm-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.enrich-confirm-form .form-group {
+  min-width: 120px;
+  max-width: 200px;
+}
+
+/* Enrichment tabs */
+.enrich-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.enrich-tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+.enrich-tab:hover { color: var(--text); }
+.enrich-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Coverage progress bar */
+.coverage-bar {
+  background: var(--border);
+  border-radius: 4px;
+  height: 8px;
+  width: 100%;
+  min-width: 80px;
+  overflow: hidden;
+}
+.coverage-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.coverage-pct-low  .coverage-bar-fill { background: var(--danger); }
+.coverage-pct-med  .coverage-bar-fill { background: var(--warning); }
+.coverage-pct-high .coverage-bar-fill { background: var(--success); }
+
+/* Trends source chips */
+.source-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+.source-chip-off { background: rgba(34,197,94,0.15); color: var(--success); }
+.source-chip-llm { background: rgba(99,102,241,0.15); color: var(--accent); }
+.source-chip-cloud { background: rgba(245,158,11,0.15); color: var(--warning); }
+.source-chip-resolver { background: rgba(100,116,139,0.15); color: var(--muted); }
+.source-chip-user { background: rgba(99,102,241,0.25); color: var(--accent); }
+
+/* Screen-reader only text */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+/* Sortable column headers */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+th.sortable .sort-arrow { font-size: 10px; margin-left: 3px; opacity: 0.5; }
+th.sortable.sort-active .sort-arrow { opacity: 1; color: var(--accent); }
+
+/* Pagination controls */
+.pagination { display: flex; align-items: center; gap: 12px; justify-content: center; padding: 12px 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+
+/* Facts detail rows */
+.detail-row { background: var(--bg); }
+.detail-row td { padding: 0 16px 12px; border-bottom: 1px solid var(--border); }
+.detail-row:hover { background: var(--bg) !important; }
+.detail-row table { margin-top: 8px; }
+.detail-row thead th { font-size: 10px; padding: 6px 12px; }
+.detail-row tbody td { padding: 8px 12px; font-size: 13px; }
+.detail-row tbody tr { cursor: default; }
+tr.fact-row-expanded { background: var(--card-hover); }
+.fact-row { cursor: pointer; }
+.fact-row:hover { background: var(--card-hover); }
+.fact-expand-icon { display: inline-block; transition: transform 0.15s; font-size: 10px; margin-right: 6px; color: var(--muted); }
+.fact-expand-icon.open { transform: rotate(90deg); }
+.facts-filter { margin-bottom: 12px; }
+
+/* Upload drop zone */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+  transition: border-color 0.2s, background 0.2s;
+  cursor: pointer;
+}
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+.drop-zone-icon { font-size: 32px; margin-bottom: 8px; }
+.drop-zone-text { font-size: 14px; margin-bottom: 4px; }
+.drop-zone-hint { font-size: 12px; }
+.upload-form { margin-top: 20px; }
+.upload-result { margin-top: 20px; }
+
+/* Bar chart (analytics category breakdown) */
+.bar-chart { margin-bottom: 20px; }
+.bar-chart .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.bar-chart .bar-label { width: 120px; flex-shrink: 0; font-size: 13px; color: var(--text); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-chart .bar-track { flex: 1; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.bar-fill { height: 20px; background: var(--accent); border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+.bar-chart .bar-amount { width: 80px; flex-shrink: 0; font-size: 13px; color: var(--muted); text-align: right; }
+
+/* Search input row */
+.search-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.search-row .form-input { flex: 1; }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-logo">alibi<span>.</span></div>
+  <nav class="header-nav">
+    <button class="nav-btn" onclick="navigate('dashboard')">Dashboard</button>
+    <button class="nav-btn" onclick="navigate('facts')">Facts</button>
+    <button class="nav-btn" onclick="navigate('upload')">Upload</button>
+    <button class="nav-btn" onclick="navigate('analytics')">Analytics</button>
+    <button class="nav-btn" onclick="navigate('search')">Search</button>
+    <button class="nav-btn" onclick="navigate('enrichment')">Enrichment</button>
+  </nav>
+</header>
+
+<main class="main">
+  <div id="api-key-notice" class="api-key-notice">
+    API authentication required. Set the <strong>X-API-Key</strong> header or run the server in single-user mode.
+  </div>
+
+  <!-- Dashboard View -->
+  <div id="view-dashboard" class="view active">
+    <div id="dashboard-content">
+      <div class="loading-state">
+        <span class="spinner spinner-lg"></span>
+        <span>Loading dashboard...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Detail View -->
+  <div id="view-user" class="view">
+    <div id="user-content">
+      <div class="loading-state">
+        <span class="spinner spinner-lg"></span>
+        <span>Loading user...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Facts View -->
+  <div id="view-facts" class="view">
+    <div class="page-heading"><h1 class="page-title">Facts</h1></div>
+    <div id="facts-content"></div>
+  </div>
+
+  <!-- Upload View -->
+  <div id="view-upload" class="view">
+    <div class="page-heading"><h1 class="page-title">Upload Document</h1></div>
+    <div id="upload-content"></div>
+  </div>
+
+  <!-- Analytics View -->
+  <div id="view-analytics" class="view">
+    <div class="page-heading"><h1 class="page-title">Analytics</h1></div>
+    <div id="analytics-content"></div>
+  </div>
+
+  <!-- Search View -->
+  <div id="view-search" class="view">
+    <div class="page-heading"><h1 class="page-title">Search</h1></div>
+    <div id="search-content"></div>
+  </div>
+
+  <!-- Enrichment Review View -->
+  <div id="view-enrichment" class="view">
+    <div id="enrichment-content"></div>
+  </div>
+</main>
+
+<!-- Confirm Dialog -->
+<div id="confirm-overlay" class="confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="confirm-dialog">
+    <div id="confirm-title" class="confirm-title">Confirm</div>
+    <div id="confirm-body" class="confirm-body"></div>
+    <div class="confirm-actions">
+      <button class="btn btn-secondary" id="confirm-cancel">Cancel</button>
+      <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+var currentUserId = null;
+var confirmResolve = null;
+var enrichThreshold = parseFloat(localStorage.getItem('alibi_enrich_threshold')) || 0.8;
+var enrichAllItems = [];  // full data from API for client-side pagination
+var enrichPage = 1;
+var enrichPerPage = 20;
+var sortStates = {};  // tableId -> { col, dir }
+
+// ============================================================
+// Generic helpers
+// ============================================================
+async function withLoading(btn, fn) {
+  btn.disabled = true;
+  var orig = btn.textContent;
+  btn.dataset.label = orig;
+  btn.textContent = '...';
+  try { await fn(); } finally { btn.disabled = false; btn.textContent = btn.dataset.label || orig; }
+}
+
+function sortTable(tableId, colIndex, type) {
+  var table = document.getElementById(tableId);
+  if (!table) return;
+  var tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  var rows = Array.from(tbody.querySelectorAll('tr:not(.enrich-confirm-row)'));
+  var state = sortStates[tableId] || { col: -1, dir: 'asc' };
+  state.dir = (state.col === colIndex && state.dir === 'asc') ? 'desc' : 'asc';
+  state.col = colIndex;
+  sortStates[tableId] = state;
+  rows.sort(function(a, b) {
+    var av = (a.children[colIndex] || {}).textContent || '';
+    var bv = (b.children[colIndex] || {}).textContent || '';
+    if (type === 'number') { av = parseFloat(av) || 0; bv = parseFloat(bv) || 0; }
+    else if (type === 'date') { av = new Date(av) || 0; bv = new Date(bv) || 0; }
+    else { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    var cmp = av < bv ? -1 : (av > bv ? 1 : 0);
+    return state.dir === 'desc' ? -cmp : cmp;
+  });
+  rows.forEach(function(r) { tbody.appendChild(r); });
+  // Update header arrows
+  table.querySelectorAll('thead th.sortable').forEach(function(th) {
+    var arrow = th.querySelector('.sort-arrow');
+    if (!arrow) return;
+    var idx = Array.from(th.parentNode.children).indexOf(th);
+    th.classList.toggle('sort-active', idx === colIndex);
+    if (idx === colIndex) arrow.textContent = state.dir === 'asc' ? '\u25B2' : '\u25BC';
+    else arrow.textContent = '\u25B2';
+  });
+}
+
+// ============================================================
+// Routing
+// ============================================================
+function navigate(path) {
+  window.location.hash = path;
+}
+
+window.addEventListener('hashchange', handleRoute);
+window.addEventListener('load', handleRoute);
+
+function handleRoute() {
+  var hash = window.location.hash.replace('#', '') || 'dashboard';
+  document.querySelectorAll('.view').forEach(function(v) {
+    v.classList.remove('active');
+  });
+
+  if (hash.startsWith('user/')) {
+    var uid = hash.split('/')[1];
+    currentUserId = uid;
+    document.getElementById('view-user').classList.add('active');
+    renderUserDetail(uid);
+  } else if (hash === 'enrichment') {
+    document.getElementById('view-enrichment').classList.add('active');
+    renderEnrichment();
+  } else if (hash === 'facts') {
+    document.getElementById('view-facts').classList.add('active');
+    renderFacts();
+  } else if (hash === 'upload') {
+    document.getElementById('view-upload').classList.add('active');
+    renderUpload();
+  } else if (hash === 'analytics') {
+    document.getElementById('view-analytics').classList.add('active');
+    renderAnalytics();
+  } else if (hash === 'search') {
+    document.getElementById('view-search').classList.add('active');
+    renderSearch();
+  } else {
+    document.getElementById('view-dashboard').classList.add('active');
+    renderDashboard();
+  }
+}
+
+// ============================================================
+// API helpers
+// ============================================================
+async function apiFetch(path, options) {
+  options = options || {};
+  var opts = Object.assign({ headers: {} }, options);
+
+  try {
+    var res = await fetch(path, opts);
+
+    if (res.status === 401) {
+      document.getElementById('api-key-notice').style.display = 'block';
+      showToast('Authentication required — see notice above.', 'error');
+      return null;
+    }
+
+    if (res.status === 204) return true;
+
+    if (!res.ok) {
+      var text = await res.text();
+      var msg = text || ('HTTP ' + res.status);
+      try {
+        var j = JSON.parse(text);
+        msg = j.detail || j.message || msg;
+      } catch(_) {}
+      throw new Error(msg);
+    }
+
+    return await res.json();
+  } catch(e) {
+    if (e.name !== 'Error' || !e.message.startsWith('HTTP')) {
+      if (!(e instanceof TypeError && e.message.includes('fetch'))) {
+        throw e;
+      }
+      throw new Error('Network error — is the server running?');
+    }
+    throw e;
+  }
+}
+
+async function apiGet(path) {
+  return apiFetch(path);
+}
+
+async function apiPost(path, body) {
+  return apiFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
+async function apiPatch(path, body) {
+  return apiFetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
+async function apiDelete(path) {
+  return apiFetch(path, { method: 'DELETE' });
+}
+
+// ============================================================
+// Toast notifications
+// ============================================================
+function showToast(msg, type) {
+  type = type || 'info';
+  var container = document.getElementById('toast-container');
+  var el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.innerHTML = '<span class="toast-dot"></span><span>' + escHtml(msg) + '</span>';
+  container.appendChild(el);
+
+  // Trigger animation
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      el.classList.add('show');
+    });
+  });
+
+  setTimeout(function() {
+    el.classList.remove('show');
+    setTimeout(function() {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 300);
+  }, 3500);
+}
+
+// ============================================================
+// Confirm dialog
+// ============================================================
+function confirm(title, body) {
+  return new Promise(function(resolve) {
+    confirmResolve = resolve;
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-body').textContent = body;
+    var overlay = document.getElementById('confirm-overlay');
+    overlay.classList.add('show');
+    var firstBtn = overlay.querySelector('button');
+    if (firstBtn) firstBtn.focus();
+  });
+}
+
+document.getElementById('confirm-cancel').addEventListener('click', function() {
+  document.getElementById('confirm-overlay').classList.remove('show');
+  if (confirmResolve) confirmResolve(false);
+  confirmResolve = null;
+});
+
+document.getElementById('confirm-ok').addEventListener('click', function() {
+  document.getElementById('confirm-overlay').classList.remove('show');
+  if (confirmResolve) confirmResolve(true);
+  confirmResolve = null;
+});
+
+document.getElementById('confirm-overlay').addEventListener('click', function(e) {
+  if (e.target === this) {
+    this.classList.remove('show');
+    if (confirmResolve) confirmResolve(false);
+    confirmResolve = null;
+  }
+});
+
+// ============================================================
+// Utilities
+// ============================================================
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function relativeTime(dateStr) {
+  if (!dateStr) return '—';
+  var d = new Date(dateStr);
+  var now = new Date();
+  var diff = Math.floor((now - d) / 1000);
+
+  if (diff < 60) return 'just now';
+  if (diff < 3600) {
+    var m = Math.floor(diff / 60);
+    return m + ' minute' + (m !== 1 ? 's' : '') + ' ago';
+  }
+  if (diff < 86400) {
+    var h = Math.floor(diff / 3600);
+    return h + ' hour' + (h !== 1 ? 's' : '') + ' ago';
+  }
+  if (diff < 86400 * 30) {
+    var day = Math.floor(diff / 86400);
+    return day + ' day' + (day !== 1 ? 's' : '') + ' ago';
+  }
+  if (diff < 86400 * 365) {
+    var mo = Math.floor(diff / (86400 * 30));
+    return mo + ' month' + (mo !== 1 ? 's' : '') + ' ago';
+  }
+  var yr = Math.floor(diff / (86400 * 365));
+  return yr + ' year' + (yr !== 1 ? 's' : '') + ' ago';
+}
+
+function contactIcon(type) {
+  if (type === 'telegram') return '@';
+  if (type === 'email') return '&#9993;';
+  return '&#9679;';
+}
+
+function setHtml(id, html) {
+  var el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+function setLoading(containerId) {
+  setHtml(containerId, '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Loading...</span></div>');
+}
+
+// ============================================================
+// Dashboard
+// ============================================================
+async function renderDashboard() {
+  setHtml('dashboard-content', '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Loading dashboard...</span></div>');
+
+  var health, users;
+  try {
+    [health, users] = await Promise.all([
+      apiGet('/health'),
+      apiGet('/api/v1/users')
+    ]);
+  } catch(e) {
+    setHtml('dashboard-content', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+    return;
+  }
+
+  if (!health || !users) return;
+
+  var db = health.database || {};
+
+  var statsHtml = '<div class="stats-grid">'
+    + statCard('Version', escHtml(health.version || '—'), '')
+    + statCard('Documents', db.documents || 0, '')
+    + statCard('Facts', db.facts || 0, '')
+    + statCard('Atoms', db.atoms || 0, '')
+    + statCard('Clouds', db.clouds || 0, '')
+    + statCard('Bundles', db.bundles || 0, '')
+    + statCard('Items', db.fact_items || 0, '')
+    + statCard('DB Schema', 'v' + (db.schema_version || '?'), health.status === 'ok' ? '<span class="health-dot ok"></span>healthy' : '<span class="health-dot err"></span>error')
+    + '</div>';
+
+  var usersHtml = buildUsersTable(users);
+
+  setHtml('dashboard-content',
+    '<div class="page-heading">'
+    + '<h1 class="page-title">Dashboard</h1>'
+    + '<button class="btn btn-primary" onclick="showCreateUserModal()">+ Create User</button>'
+    + '</div>'
+    + statsHtml
+    + usersHtml
+  );
+
+  // Inline create-user form (injected below the table)
+  document.getElementById('create-user-toggle')
+    && document.getElementById('create-user-toggle').addEventListener('click', showCreateUserModal);
+}
+
+function statCard(label, value, sub) {
+  return '<div class="stat-card">'
+    + '<div class="stat-label">' + label + '</div>'
+    + '<div class="stat-value">' + value + '</div>'
+    + (sub ? '<div class="stat-sub">' + sub + '</div>' : '')
+    + '</div>';
+}
+
+function buildUsersTable(users) {
+  if (!users || users.length === 0) {
+    return '<div class="card"><div class="card-body">'
+      + '<div class="empty-state">'
+      + '<div class="empty-state-title">No users yet</div>'
+      + '<p>Create the first user to get started.</p>'
+      + '</div></div></div>';
+  }
+
+  var rows = users.map(function(u) {
+    var statusBadge = u.is_active
+      ? '<span class="badge badge-success">active</span>'
+      : '<span class="badge badge-danger">inactive</span>';
+    return '<tr onclick="navigate(\'user/' + escHtml(u.id) + '\')">'
+      + '<td><strong>' + escHtml(u.name || '(unnamed)') + '</strong></td>'
+      + '<td>' + statusBadge + '</td>'
+      + '<td style="color:var(--muted)">' + escHtml(String(u.id)) + '</td>'
+      + '<td style="color:var(--muted)">' + relativeTime(u.created_at) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<div class="card">'
+    + '<div class="card-header"><span class="card-title">Users</span>'
+    + '<span class="badge badge-muted">' + users.length + '</span>'
+    + '</div>'
+    + '<div class="table-wrap"><table id="users-table">'
+    + '<thead><tr><th class="sortable" onclick="sortTable(\'users-table\',0,\'string\')">Name<span class="sort-arrow">\u25B2</span></th><th>Status</th><th>ID</th><th class="sortable" onclick="sortTable(\'users-table\',3,\'string\')">Created<span class="sort-arrow">\u25B2</span></th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div></div>';
+}
+
+// Create user form (rendered inline in dashboard)
+async function showCreateUserModal() {
+  var container = document.getElementById('dashboard-content');
+  // Check if form already appended
+  if (document.getElementById('create-user-form-card')) {
+    document.getElementById('create-user-form-card').scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('new-user-name').focus();
+    return;
+  }
+
+  var formHtml = '<div id="create-user-form-card" class="card" style="margin-top:16px">'
+    + '<div class="card-header"><span class="card-title">New User</span></div>'
+    + '<div class="card-body">'
+    + '<div class="form-row">'
+    + '<div class="form-group">'
+    + '<label class="form-label" for="new-user-name">Display Name</label>'
+    + '<input id="new-user-name" class="form-input" type="text" placeholder="e.g. Alice" autocomplete="off" minlength="1" maxlength="100">'
+    + '</div>'
+    + '<button class="btn btn-primary" id="create-user-submit-btn" onclick="submitCreateUser()">Create</button>'
+    + '<button class="btn btn-secondary" onclick="cancelCreateUser()">Cancel</button>'
+    + '</div></div></div>';
+
+  container.insertAdjacentHTML('beforeend', formHtml);
+
+  var input = document.getElementById('new-user-name');
+  input.scrollIntoView({ behavior: 'smooth' });
+  input.focus();
+
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') submitCreateUser();
+    if (e.key === 'Escape') cancelCreateUser();
+  });
+}
+
+async function submitCreateUser() {
+  var name = (document.getElementById('new-user-name').value || '').trim();
+  document.getElementById('new-user-name').value = name;
+  var btn = document.getElementById('create-user-submit-btn');
+  if (!name) {
+    showToast('User name is required', 'error');
+    document.getElementById('new-user-name').focus();
+    return;
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    var body = {};
+    if (name) body.name = name;
+    var user = await apiPost('/api/v1/users', body);
+    if (!user) return;
+    showToast('User created', 'success');
+    navigate('user/' + user.id);
+  } catch(e) {
+    showToast(e.message, 'error');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function cancelCreateUser() {
+  var el = document.getElementById('create-user-form-card');
+  if (el) el.remove();
+}
+
+// ============================================================
+// User Detail
+// ============================================================
+async function renderUserDetail(userId) {
+  setHtml('user-content', '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Loading user...</span></div>');
+
+  var user, keys;
+  try {
+    [user, keys] = await Promise.all([
+      apiGet('/api/v1/users/' + userId),
+      apiGet('/api/v1/users/' + userId + '/keys')
+    ]);
+  } catch(e) {
+    setHtml('user-content', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+    return;
+  }
+
+  if (!user) return;
+
+  var contacts = user.contacts || [];
+  var html = buildUserDetailHtml(user, contacts, keys || []);
+  setHtml('user-content', html);
+  attachUserDetailEvents(user, contacts, keys || []);
+}
+
+function buildUserDetailHtml(user, contacts, keys) {
+  return '<div>'
+    + '<button class="back-link" onclick="navigate(\'dashboard\')">&larr; Dashboard</button>'
+    + '<div style="margin-top:20px; margin-bottom:24px">'
+    + '<div class="inline-edit-wrap">'
+    + '<span id="user-name-display" class="inline-edit-display" title="Click to edit">'
+    + escHtml(user.name || '(unnamed)') + '</span>'
+    + '<span id="user-name-edit-hint" style="font-size:11px;color:var(--muted)">click to edit</span>'
+    + '</div>'
+    + '<div style="margin-top:6px;display:flex;gap:8px;align-items:center">'
+    + (user.is_active
+        ? '<span class="badge badge-success">active</span>'
+        : '<span class="badge badge-danger">inactive</span>')
+    + '<span style="color:var(--muted);font-size:12px">ID: ' + escHtml(String(user.id)) + '</span>'
+    + '</div>'
+    + '</div>'
+
+    // Contacts section
+    + '<div class="section">'
+    + '<div class="section-header">'
+    + '<span class="section-title">Contacts</span>'
+    + '<button class="btn btn-secondary btn-sm" id="add-contact-btn">+ Add contact</button>'
+    + '</div>'
+    + '<div id="add-contact-form" style="display:none;margin-bottom:12px">'
+    + buildAddContactForm()
+    + '</div>'
+    + '<div id="contacts-list">'
+    + buildContactsList(contacts, user.id)
+    + '</div>'
+    + '</div>'
+
+    + '<div class="divider"></div>'
+
+    // API Keys section
+    + '<div class="section">'
+    + '<div class="section-header">'
+    + '<span class="section-title">API Keys</span>'
+    + '<button class="btn btn-secondary btn-sm" id="gen-key-btn">+ Generate key</button>'
+    + '</div>'
+    + '<div id="new-key-reveal" style="display:none"></div>'
+    + '<div id="keys-list">'
+    + buildKeysList(keys, user.id)
+    + '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+function buildAddContactForm() {
+  return '<div class="card"><div class="card-body">'
+    + '<div class="form-row">'
+    + '<div class="form-group" style="max-width:150px">'
+    + '<label class="form-label">Type</label>'
+    + '<select id="contact-type-select" class="form-select">'
+    + '<option value="telegram">Telegram</option>'
+    + '<option value="email">Email</option>'
+    + '</select>'
+    + '</div>'
+    + '<div class="form-group">'
+    + '<label class="form-label">Value</label>'
+    + '<input id="contact-value-input" class="form-input" type="text" placeholder="@username or ID">'
+    + '</div>'
+    + '<div class="form-group" style="max-width:130px">'
+    + '<label class="form-label">Label (optional)</label>'
+    + '<input id="contact-label-input" class="form-input" type="text" placeholder="e.g. personal">'
+    + '</div>'
+    + '<button class="btn btn-primary" id="save-contact-btn" style="align-self:flex-end">Save</button>'
+    + '<button class="btn btn-secondary" id="cancel-contact-btn" style="align-self:flex-end">Cancel</button>'
+    + '</div>'
+    + '</div></div>';
+}
+
+function buildContactsList(contacts, userId) {
+  if (!contacts || contacts.length === 0) {
+    return '<div class="empty-state"><p>No contacts added yet.</p></div>';
+  }
+  return contacts.map(function(c) {
+    return '<div class="list-item" id="contact-item-' + c.id + '">'
+      + '<i class="list-item-icon">' + contactIcon(c.contact_type) + '</i>'
+      + '<div class="list-item-body">'
+      + '<div class="list-item-primary">' + escHtml(c.value) + '</div>'
+      + '<div class="list-item-secondary">'
+      + escHtml(c.contact_type)
+      + (c.label ? ' &middot; ' + escHtml(c.label) : '')
+      + ' &middot; ' + relativeTime(c.created_at)
+      + '</div>'
+      + '</div>'
+      + '<div class="list-item-actions">'
+      + '<button class="btn btn-ghost btn-icon" title="Delete contact" aria-label="Delete" '
+      + 'onclick="deleteContact(' + escHtml(String(userId)) + ',' + escHtml(String(c.id)) + ')">'
+      + '&times;</button>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function buildKeysList(keys, userId) {
+  if (!keys || keys.length === 0) {
+    return '<div class="empty-state"><p>No API keys yet.</p></div>';
+  }
+  return keys.map(function(k) {
+    var activeBadge = k.is_active
+      ? '<span class="badge badge-success">active</span>'
+      : '<span class="badge badge-muted">revoked</span>';
+    var lastUsed = k.last_used_at ? relativeTime(k.last_used_at) : 'never';
+
+    return '<div class="list-item" id="key-item-' + k.id + '">'
+      + '<div class="list-item-body">'
+      + '<div class="list-item-primary" style="display:flex;align-items:center;gap:8px">'
+      + '<span class="key-prefix">' + escHtml(k.key_prefix) + '...</span>'
+      + activeBadge
+      + (k.label ? '<span style="color:var(--muted);font-size:12px">' + escHtml(k.label) + '</span>' : '')
+      + '</div>'
+      + '<div class="list-item-secondary">'
+      + 'Created ' + relativeTime(k.created_at)
+      + ' &middot; Last used: ' + lastUsed
+      + '</div>'
+      + '</div>'
+      + '<div class="list-item-actions">'
+      + (k.is_active
+          ? '<button class="btn btn-danger btn-sm" onclick="revokeKey(' + escHtml(String(userId)) + ',' + escHtml(String(k.id)) + ')">Revoke</button>'
+          : '')
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function attachUserDetailEvents(user, contacts, keys) {
+  var userId = user.id;
+
+  // Inline name edit
+  var nameDisplay = document.getElementById('user-name-display');
+  var editHint = document.getElementById('user-name-edit-hint');
+  if (nameDisplay) {
+    nameDisplay.addEventListener('click', function() {
+      startNameEdit(nameDisplay, editHint, userId);
+    });
+  }
+
+  // Add contact form toggle
+  var addContactBtn = document.getElementById('add-contact-btn');
+  if (addContactBtn) {
+    addContactBtn.addEventListener('click', function() {
+      var form = document.getElementById('add-contact-form');
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
+      if (form.style.display === 'block') {
+        document.getElementById('contact-value-input').focus();
+      }
+    });
+  }
+
+  var saveContactBtn = document.getElementById('save-contact-btn');
+  if (saveContactBtn) {
+    saveContactBtn.addEventListener('click', function() {
+      addContact(userId);
+    });
+  }
+
+  var cancelContactBtn = document.getElementById('cancel-contact-btn');
+  if (cancelContactBtn) {
+    cancelContactBtn.addEventListener('click', function() {
+      document.getElementById('add-contact-form').style.display = 'none';
+    });
+  }
+
+  var contactValueInput = document.getElementById('contact-value-input');
+  if (contactValueInput) {
+    contactValueInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') addContact(userId);
+      if (e.key === 'Escape') document.getElementById('add-contact-form').style.display = 'none';
+    });
+  }
+
+  // Dynamic placeholder for contact type
+  var contactTypeSelect = document.getElementById('contact-type-select');
+  if (contactTypeSelect && contactValueInput) {
+    contactTypeSelect.addEventListener('change', function() {
+      contactValueInput.placeholder = contactTypeSelect.value === 'email' ? 'email@example.com' : '@username or ID';
+    });
+  }
+
+  // Generate key
+  var genKeyBtn = document.getElementById('gen-key-btn');
+  if (genKeyBtn) {
+    genKeyBtn.addEventListener('click', function() {
+      generateKey(userId);
+    });
+  }
+}
+
+// ============================================================
+// Inline name edit
+// ============================================================
+function startNameEdit(displayEl, hintEl, userId) {
+  var current = displayEl.textContent.trim();
+  if (current === '(unnamed)') current = '';
+
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'inline-edit-input';
+  input.value = current;
+  input.placeholder = 'Display name';
+
+  displayEl.replaceWith(input);
+  if (hintEl) hintEl.style.display = 'none';
+  input.focus();
+  input.select();
+
+  async function commit() {
+    var newName = input.value.trim();
+    if (newName === current && newName !== '') {
+      restoreDisplay(input, hintEl, newName || '(unnamed)', userId);
+      return;
+    }
+    try {
+      var body = {};
+      if (newName) body.name = newName;
+      await apiPatch('/api/v1/users/' + userId, body);
+      restoreDisplay(input, hintEl, newName || '(unnamed)', userId);
+      showToast('Name updated', 'success');
+    } catch(e) {
+      showToast(e.message, 'error');
+      restoreDisplay(input, hintEl, current || '(unnamed)', userId);
+    }
+  }
+
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { input.blur(); }
+    if (e.key === 'Escape') {
+      input.removeEventListener('blur', commit);
+      restoreDisplay(input, hintEl, current || '(unnamed)', userId);
+    }
+  });
+}
+
+function restoreDisplay(input, hintEl, name, userId) {
+  var newDisplay = document.createElement('span');
+  newDisplay.id = 'user-name-display';
+  newDisplay.className = 'inline-edit-display';
+  newDisplay.title = 'Click to edit';
+  newDisplay.textContent = name;
+  input.replaceWith(newDisplay);
+  newDisplay.addEventListener('click', function() {
+    startNameEdit(newDisplay, hintEl, userId);
+  });
+  if (hintEl) hintEl.style.display = '';
+}
+
+// ============================================================
+// Contacts
+// ============================================================
+async function addContact(userId) {
+  var type = document.getElementById('contact-type-select').value;
+  var value = (document.getElementById('contact-value-input').value || '').trim();
+  var label = (document.getElementById('contact-label-input').value || '').trim();
+  var btn = document.getElementById('save-contact-btn');
+
+  if (!value) {
+    showToast('Contact value is required', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+
+  try {
+    var body = { contact_type: type, value: value };
+    if (label) body.label = label;
+    var contact = await apiPost('/api/v1/users/' + userId + '/contacts', body);
+    if (!contact) return;
+
+    showToast('Contact added', 'success');
+    document.getElementById('add-contact-form').style.display = 'none';
+    document.getElementById('contact-value-input').value = '';
+    document.getElementById('contact-label-input').value = '';
+
+    // Refresh contacts list
+    var contactsData = await apiGet('/api/v1/users/' + userId + '/contacts');
+    if (contactsData) {
+      setHtml('contacts-list', buildContactsList(contactsData, userId));
+    }
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteContact(userId, contactId) {
+  var ok = await confirm('Delete contact?', 'This contact will be permanently removed.');
+  if (!ok) return;
+
+  try {
+    var result = await apiDelete('/api/v1/users/' + userId + '/contacts/' + contactId);
+    if (result === null) return;
+    showToast('Contact removed', 'success');
+    var el = document.getElementById('contact-item-' + contactId);
+    if (el) {
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 0.2s';
+      setTimeout(function() { if (el.parentNode) el.remove(); }, 200);
+    }
+  } catch(e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ============================================================
+// API Keys
+// ============================================================
+async function generateKey(userId) {
+  var btn = document.getElementById('gen-key-btn');
+  if (btn) btn.disabled = true;
+
+  var labelInput = document.getElementById('new-key-label-input');
+  var label = labelInput ? labelInput.value.trim() : 'default';
+
+  try {
+    var body = { label: label || 'default' };
+    var result = await apiPost('/api/v1/users/' + userId + '/keys', body);
+    if (!result) return;
+
+    // Show mnemonic reveal box
+    var revealHtml = '<div class="mnemonic-box" id="mnemonic-reveal-box">'
+      + '<div class="mnemonic-warning">Save this key — it will not be shown again</div>'
+      + '<div class="mnemonic-value" id="mnemonic-text" title="Click to copy">'
+      + escHtml(result.mnemonic)
+      + '</div>'
+      + '<div class="mnemonic-hint">Click the key to copy it to clipboard. Store it securely — this is the only time it will be displayed.</div>'
+      + '</div>';
+
+    var revealEl = document.getElementById('new-key-reveal');
+    if (revealEl) {
+      revealEl.innerHTML = revealHtml;
+      revealEl.style.display = 'block';
+      revealEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Attach copy handler
+    var mnemonicEl = document.getElementById('mnemonic-text');
+    if (mnemonicEl) {
+      mnemonicEl.addEventListener('click', function() {
+        copyToClipboard(result.mnemonic, mnemonicEl);
+      });
+    }
+
+    showToast('API key generated', 'success');
+
+    // Refresh keys list
+    var keysData = await apiGet('/api/v1/users/' + userId + '/keys');
+    if (keysData) {
+      setHtml('keys-list', buildKeysList(keysData, userId));
+    }
+  } catch(e) {
+    showToast(e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function revokeKey(userId, keyId) {
+  var ok = await confirm('Revoke this API key?', 'The key will be deactivated and can no longer be used for authentication.');
+  if (!ok) return;
+
+  try {
+    var result = await apiDelete('/api/v1/users/' + userId + '/keys/' + keyId);
+    if (result === null) return;
+    showToast('Key revoked', 'success');
+    // Refresh keys list
+    var keysData = await apiGet('/api/v1/users/' + userId + '/keys');
+    if (keysData) {
+      setHtml('keys-list', buildKeysList(keysData, userId));
+    }
+  } catch(e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ============================================================
+// Clipboard
+// ============================================================
+function copyToClipboard(text, feedbackEl) {
+  var fallback = function() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      if (feedbackEl) flashCopied(feedbackEl);
+      else showToast('Copied to clipboard', 'success');
+    } catch(_) {
+      showToast('Could not copy — please select and copy manually', 'error');
+    }
+    document.body.removeChild(ta);
+  };
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(function() {
+      if (feedbackEl) flashCopied(feedbackEl);
+      else showToast('Copied to clipboard', 'success');
+    }).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
+function flashCopied(el) {
+  el.classList.add('copied');
+  var original = el.textContent;
+  el.textContent = 'Copied!';
+  setTimeout(function() {
+    el.classList.remove('copied');
+    el.textContent = original;
+  }, 1500);
+}
+
+// ============================================================
+// Enrichment Review
+// ============================================================
+var enrichActiveTab = 'review';
+
+async function renderEnrichment() {
+  setLoading('enrichment-content');
+
+  var stats, queue;
+  try {
+    var results = await Promise.all([
+      apiGet('/api/v1/enrichment/stats'),
+      apiGet('/api/v1/enrichment/review?threshold=' + enrichThreshold)
+    ]);
+    stats = results[0];
+    queue = results[1];
+  } catch(e) {
+    setHtml('enrichment-content', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+    return;
+  }
+
+  if (!stats || !queue) return;
+
+  enrichAllItems = queue;
+  enrichPage = 1;
+  setHtml('enrichment-content', buildEnrichmentView(stats, enrichAllItems));
+  attachEnrichmentEvents(enrichAllItems);
+}
+
+function switchEnrichTab(tab) {
+  enrichActiveTab = tab;
+  document.querySelectorAll('.enrich-tab').forEach(function(t) {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  document.getElementById('enrich-tab-review').style.display = tab === 'review' ? 'block' : 'none';
+  document.getElementById('enrich-tab-analytics').style.display = tab === 'analytics' ? 'block' : 'none';
+  if (tab === 'analytics') renderEnrichmentAnalytics();
+}
+
+function buildEnrichmentView(stats, queue) {
+  var pageItems = paginateItems(queue, enrichPage);
+  return '<div class="page-heading">'
+    + '<h1 class="page-title">Enrichment</h1>'
+    + '<button class="btn btn-secondary" onclick="renderEnrichment()">Refresh</button>'
+    + '</div>'
+    + buildEnrichmentStats(stats)
+    + '<div class="enrich-tabs">'
+    + '<button class="enrich-tab active" data-tab="review" onclick="switchEnrichTab(\'review\')">Review Queue</button>'
+    + '<button class="enrich-tab" data-tab="analytics" onclick="switchEnrichTab(\'analytics\')">Analytics</button>'
+    + '</div>'
+    + '<div id="enrich-tab-review">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<label class="form-label" for="enrich-threshold-input" style="margin:0;white-space:nowrap">Confidence threshold</label>'
+    + '<input id="enrich-threshold-input" class="form-input" type="number" step="0.05" min="0" max="1" value="' + enrichThreshold + '" style="width:80px" onchange="updateEnrichThreshold(this.value)">'
+    + '</div>'
+    + buildEnrichmentQueue(pageItems)
+    + buildPaginationControls(queue.length)
+    + '</div>'
+    + '<div id="enrich-tab-analytics" style="display:none"><div class="loading-state"><span class="spinner spinner-lg"></span><span>Loading analytics...</span></div></div>';
+}
+
+function updateEnrichThreshold(val) {
+  var v = parseFloat(val);
+  if (isNaN(v) || v < 0 || v > 1) return;
+  enrichThreshold = v;
+  localStorage.setItem('alibi_enrich_threshold', String(v));
+  renderEnrichment();
+}
+
+function paginateItems(items, page) {
+  var start = (page - 1) * enrichPerPage;
+  return items.slice(start, start + enrichPerPage);
+}
+
+function buildPaginationControls(totalItems) {
+  var totalPages = Math.max(1, Math.ceil(totalItems / enrichPerPage));
+  if (totalItems <= enrichPerPage) return '';
+  return '<div class="pagination">'
+    + '<button class="btn btn-secondary btn-sm" onclick="enrichPageNav(-1)"' + (enrichPage <= 1 ? ' disabled' : '') + '>Prev</button>'
+    + '<span>Page ' + enrichPage + ' of ' + totalPages + '</span>'
+    + '<button class="btn btn-secondary btn-sm" onclick="enrichPageNav(1)"' + (enrichPage >= totalPages ? ' disabled' : '') + '>Next</button>'
+    + '</div>';
+}
+
+function enrichPageNav(delta) {
+  var totalPages = Math.max(1, Math.ceil(enrichAllItems.length / enrichPerPage));
+  var newPage = Math.min(Math.max(1, enrichPage + delta), totalPages);
+  enrichPage = newPage;
+  var container = document.getElementById('enrich-tab-review');
+  if (!container) return;
+  var thresholdHtml = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<label class="form-label" for="enrich-threshold-input" style="margin:0;white-space:nowrap">Confidence threshold</label>'
+    + '<input id="enrich-threshold-input" class="form-input" type="number" step="0.05" min="0" max="1" value="' + enrichThreshold + '" style="width:80px" onchange="updateEnrichThreshold(this.value)">'
+    + '</div>';
+  container.innerHTML = thresholdHtml + buildEnrichmentQueue(paginateItems(enrichAllItems, enrichPage)) + buildPaginationControls(enrichAllItems.length);
+}
+
+function buildEnrichmentStats(stats) {
+  var avgPct = stats.avg_confidence != null
+    ? Math.round(stats.avg_confidence * 100) + '%'
+    : '—';
+
+  var bySourceHtml = '';
+  if (stats.by_source && stats.by_source.length > 0) {
+    bySourceHtml = stats.by_source.map(function(s) {
+      return escHtml(s.enrichment_source) + ':&nbsp;' + s.count;
+    }).join('&ensp;&middot;&ensp;');
+  } else {
+    bySourceHtml = 'none';
+  }
+
+  return '<div class="stats-grid">'
+    + statCard('Total Enriched', stats.total_enriched || 0, '')
+    + statCard('Avg Confidence', avgPct, '')
+    + statCard('Pending Review', stats.pending_review || 0, '')
+    + statCard('By Source', '<span style="font-size:12px;font-weight:400">' + bySourceHtml + '</span>', '')
+    + '</div>';
+}
+
+function enrichSourceBadge(source) {
+  if (!source) return '<span class="badge badge-muted">—</span>';
+  var cls = (source === 'openfoodfacts' || source === 'open_food_facts' || source === 'cloud_api')
+    ? 'badge-accent'
+    : 'badge-muted';
+  return '<span class="badge ' + cls + '">' + escHtml(source) + '</span>';
+}
+
+function enrichConfidenceHtml(conf) {
+  if (conf == null) return '<span class="conf-high">—</span>';
+  var pct = Math.round(conf * 100);
+  var cls = conf < 0.5 ? 'conf-low' : (conf < 0.7 ? 'conf-med' : 'conf-high');
+  var srLabel = conf < 0.5 ? '(Low)' : (conf < 0.7 ? '(Med)' : '(High)');
+  return '<span class="' + cls + '">' + pct + '%</span><span class="sr-only">' + srLabel + '</span>';
+}
+
+function buildEnrichmentQueue(queue) {
+  if (!queue || queue.length === 0) {
+    return '<div class="card"><div class="card-body">'
+      + '<div class="empty-state">'
+      + '<div class="empty-state-title">No items pending review</div>'
+      + '<p>All enrichment data has been confirmed.</p>'
+      + '</div></div></div>';
+  }
+
+  var rows = queue.map(function(item) {
+    return '<tr id="enrich-row-' + escHtml(item.id) + '">'
+      + '<td><strong>' + escHtml(item.name || '—') + '</strong></td>'
+      + '<td>' + escHtml(item.brand || '—') + '</td>'
+      + '<td>' + escHtml(item.category || '—') + '</td>'
+      + '<td style="color:var(--muted)">' + escHtml(item.vendor || '—') + '</td>'
+      + '<td>' + enrichSourceBadge(item.enrichment_source) + '</td>'
+      + '<td>' + enrichConfidenceHtml(item.enrichment_confidence) + '</td>'
+      + '<td>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button class="btn btn-primary btn-sm" data-label="Confirm" onclick="showConfirmEnrichForm(\'' + escHtml(item.id) + '\')">Confirm</button>'
+      + '<button class="btn btn-danger btn-sm" data-label="Reject" onclick="withLoading(this,function(){return rejectEnrichItem(\'' + escHtml(item.id) + '\',\'' + escHtml(item.name || '') + '\')})">Reject</button>'
+      + '</div>'
+      + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<div class="card">'
+    + '<div class="card-header">'
+    + '<span class="card-title">Review Queue</span>'
+    + '<span class="badge badge-muted">' + queue.length + '</span>'
+    + '</div>'
+    + '<div class="table-wrap"><table id="enrich-table">'
+    + '<thead><tr>'
+    + '<th class="sortable" onclick="sortTable(\'enrich-table\',0,\'string\')">Item Name<span class="sort-arrow">\u25B2</span></th><th>Brand</th><th>Category</th>'
+    + '<th>Vendor</th><th class="sortable" onclick="sortTable(\'enrich-table\',4,\'string\')">Source<span class="sort-arrow">\u25B2</span></th><th class="sortable" onclick="sortTable(\'enrich-table\',5,\'number\')">Confidence<span class="sort-arrow">\u25B2</span></th><th>Actions</th>'
+    + '</tr></thead>'
+    + '<tbody id="enrich-queue-body">' + rows + '</tbody>'
+    + '</table></div></div>';
+}
+
+function attachEnrichmentEvents() {
+  // Events are attached via inline onclick handlers in the generated HTML.
+  // Nothing extra to bind here.
+}
+
+function showConfirmEnrichForm(itemId) {
+  // If a form row already exists for this item, remove it (toggle off)
+  var existingFormRow = document.getElementById('enrich-form-row-' + itemId);
+  if (existingFormRow) {
+    existingFormRow.remove();
+    return;
+  }
+
+  // Close any other open confirm forms
+  document.querySelectorAll('.enrich-confirm-row').forEach(function(el) { el.remove(); });
+
+  var dataRow = document.getElementById('enrich-row-' + itemId);
+  if (!dataRow) return;
+
+  // Read current values from the data row cells
+  var cells = dataRow.querySelectorAll('td');
+  var currentBrand = cells[1] ? cells[1].textContent.trim() : '';
+  var currentCategory = cells[2] ? cells[2].textContent.trim() : '';
+  if (currentBrand === '—') currentBrand = '';
+  if (currentCategory === '—') currentCategory = '';
+
+  var formRow = document.createElement('tr');
+  formRow.id = 'enrich-form-row-' + itemId;
+  formRow.className = 'enrich-confirm-row';
+  formRow.innerHTML = '<td colspan="7">'
+    + '<div class="enrich-confirm-form">'
+    + '<div class="form-group">'
+    + '<label class="form-label">Brand</label>'
+    + '<input id="enrich-brand-' + escHtml(itemId) + '" class="form-input" type="text" value="' + escHtml(currentBrand) + '" placeholder="Brand (optional)">'
+    + '</div>'
+    + '<div class="form-group">'
+    + '<label class="form-label">Category</label>'
+    + '<input id="enrich-category-' + escHtml(itemId) + '" class="form-input" type="text" value="' + escHtml(currentCategory) + '" placeholder="Category (optional)">'
+    + '</div>'
+    + '<button class="btn btn-primary btn-sm" data-label="Save &amp; Confirm" onclick="withLoading(this,function(){return submitConfirmEnrich(\'' + escHtml(itemId) + '\')})">Save &amp; Confirm</button>'
+    + '<button class="btn btn-secondary btn-sm" onclick="cancelConfirmEnrichForm(\'' + escHtml(itemId) + '\')">Cancel</button>'
+    + '</div>'
+    + '</td>';
+
+  dataRow.insertAdjacentElement('afterend', formRow);
+
+  var brandInput = document.getElementById('enrich-brand-' + itemId);
+  if (brandInput) brandInput.focus();
+
+  // Allow Enter to submit from within the form inputs
+  [brandInput, document.getElementById('enrich-category-' + itemId)].forEach(function(inp) {
+    if (!inp) return;
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') submitConfirmEnrich(itemId);
+      if (e.key === 'Escape') cancelConfirmEnrichForm(itemId);
+    });
+  });
+}
+
+function cancelConfirmEnrichForm(itemId) {
+  var formRow = document.getElementById('enrich-form-row-' + itemId);
+  if (formRow) formRow.remove();
+}
+
+async function submitConfirmEnrich(itemId) {
+  var brandInput = document.getElementById('enrich-brand-' + itemId);
+  var categoryInput = document.getElementById('enrich-category-' + itemId);
+
+  var brand = brandInput ? brandInput.value.trim() : '';
+  var category = categoryInput ? categoryInput.value.trim() : '';
+
+  var body = {};
+  if (brand) body.brand = brand;
+  if (category) body.category = category;
+
+  try {
+    var result = await apiPost('/api/v1/enrichment/review/' + itemId + '/confirm', body);
+    if (!result) return;
+    showToast('Enrichment confirmed', 'success');
+    removeEnrichRow(itemId);
+    refreshEnrichmentStats();
+  } catch(e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function rejectEnrichItem(itemId, itemName) {
+  var label = itemName ? '"' + itemName + '"' : 'this item';
+  var ok = await confirm('Reject enrichment?', 'Reject enrichment for ' + label + '? Brand and category data will be cleared.');
+  if (!ok) return;
+
+  try {
+    var result = await apiPost('/api/v1/enrichment/review/' + itemId + '/reject', {});
+    if (!result) return;
+    showToast('Enrichment rejected', 'success');
+    removeEnrichRow(itemId);
+    refreshEnrichmentStats();
+  } catch(e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function removeEnrichRow(itemId) {
+  // Remove from client-side data
+  enrichAllItems = enrichAllItems.filter(function(i) { return String(i.id) !== String(itemId); });
+
+  var formRow = document.getElementById('enrich-form-row-' + itemId);
+  if (formRow) formRow.remove();
+
+  var dataRow = document.getElementById('enrich-row-' + itemId);
+  if (dataRow) {
+    dataRow.style.opacity = '0';
+    dataRow.style.transition = 'opacity 0.2s';
+    setTimeout(function() { if (dataRow.parentNode) dataRow.remove(); }, 220);
+  }
+
+  // If queue body is now empty on this page, check if more pages exist
+  setTimeout(function() {
+    var tbody = document.getElementById('enrich-queue-body');
+    if (tbody && tbody.querySelectorAll('tr').length === 0) {
+      if (enrichAllItems.length === 0) {
+        var card = tbody.closest('.card');
+        if (card) {
+          card.innerHTML = '<div class="card-body">'
+            + '<div class="empty-state">'
+            + '<div class="empty-state-title">No items pending review</div>'
+            + '<p>All enrichment data has been confirmed.</p>'
+            + '</div></div>';
+        }
+      } else {
+        // Go back a page if current page is now empty
+        var totalPages = Math.ceil(enrichAllItems.length / enrichPerPage);
+        if (enrichPage > totalPages) enrichPage = totalPages;
+        enrichPageNav(0);
+      }
+    }
+    // Update pagination controls
+    var pagDiv = document.querySelector('#enrich-tab-review .pagination');
+    if (pagDiv) {
+      var newPag = buildPaginationControls(enrichAllItems.length);
+      if (newPag) { pagDiv.outerHTML = newPag; } else { pagDiv.remove(); }
+    }
+  }, 250);
+}
+
+async function refreshEnrichmentStats() {
+  try {
+    var stats = await apiGet('/api/v1/enrichment/stats');
+    if (!stats) return;
+    // Re-render just the stats grid by rebuilding and injecting
+    var statsHtml = buildEnrichmentStats(stats);
+    var grid = document.querySelector('#enrichment-content .stats-grid');
+    if (grid) {
+      var tmp = document.createElement('div');
+      tmp.innerHTML = statsHtml;
+      var newGrid = tmp.querySelector('.stats-grid');
+      if (newGrid) grid.replaceWith(newGrid);
+    }
+  } catch(_) {
+    // Stats refresh failure is non-critical; ignore silently
+  }
+}
+
+// ============================================================
+// Enrichment Analytics
+// ============================================================
+async function renderEnrichmentAnalytics() {
+  var container = document.getElementById('enrich-tab-analytics');
+  if (!container) return;
+  container.innerHTML = '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Loading analytics...</span></div>';
+
+  var trends, coverage;
+  try {
+    var results = await Promise.all([
+      apiGet('/api/v1/enrichment/analytics/trends'),
+      apiGet('/api/v1/enrichment/analytics/coverage')
+    ]);
+    trends = results[0];
+    coverage = results[1];
+  } catch(e) {
+    container.innerHTML = '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>';
+    showToast(e.message, 'error');
+    return;
+  }
+
+  if (!trends || !coverage) return;
+
+  container.innerHTML = buildTrendsCard(trends) + buildCoverageCard(coverage);
+}
+
+function sourceChip(source) {
+  var cls = 'source-chip ';
+  if (source === 'openfoodfacts') cls += 'source-chip-off';
+  else if (source === 'llm_inference') cls += 'source-chip-llm';
+  else if (source === 'cloud_api') cls += 'source-chip-cloud';
+  else if (source === 'product_resolver') cls += 'source-chip-resolver';
+  else if (source === 'user_confirmed') cls += 'source-chip-user';
+  else cls += 'source-chip-resolver';
+  return '<span class="' + cls + '">' + escHtml(source) + '</span>';
+}
+
+function buildTrendsCard(trends) {
+  var periods = (trends && trends.periods) || [];
+  if (periods.length === 0) {
+    return '<div class="card"><div class="card-header"><span class="card-title">Enrichment Trends</span></div>'
+      + '<div class="card-body"><div class="empty-state"><div class="empty-state-title">No trend data</div>'
+      + '<p>Enrichment data will appear here after items are enriched.</p></div></div></div>';
+  }
+
+  // Collect all sources for column headers
+  var allSources = {};
+  periods.forEach(function(p) {
+    Object.keys(p.by_source || {}).forEach(function(s) { allSources[s] = true; });
+  });
+  var sourceList = Object.keys(allSources).sort();
+
+  var header = '<tr><th>Period</th><th>Total</th>';
+  sourceList.forEach(function(s) {
+    header += '<th>' + sourceChip(s) + '</th>';
+  });
+  header += '</tr>';
+
+  var rows = periods.map(function(p) {
+    var row = '<tr><td><strong>' + escHtml(p.period) + '</strong></td>'
+      + '<td>' + (p.total || 0) + '</td>';
+    sourceList.forEach(function(s) {
+      var count = (p.by_source && p.by_source[s]) || 0;
+      row += '<td>' + (count || '<span style="color:var(--muted)">0</span>') + '</td>';
+    });
+    return row + '</tr>';
+  }).join('');
+
+  return '<div class="card">'
+    + '<div class="card-header"><span class="card-title">Enrichment Trends</span>'
+    + '<span class="badge badge-muted">' + periods.length + ' periods</span></div>'
+    + '<div class="table-wrap"><table><thead>' + header + '</thead>'
+    + '<tbody>' + rows + '</tbody></table></div></div>';
+}
+
+// ============================================================
+// Facts Browser
+// ============================================================
+var factsPage = 1;
+var factsPerPage = 20;
+var factsData = null;
+var factsExpandedIds = {};
+
+async function renderFacts() {
+  setLoading('facts-content');
+  factsExpandedIds = {};
+
+  try {
+    factsData = await apiGet('/api/v1/facts?page=' + factsPage + '&per_page=' + factsPerPage);
+  } catch(e) {
+    setHtml('facts-content', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+    return;
+  }
+
+  if (!factsData) return;
+  setHtml('facts-content', buildFactsView(factsData));
+}
+
+function buildFactsView(data) {
+  var items = data.items || [];
+  var totalPages = data.pages || 1;
+
+  var filterHtml = '<div class="facts-filter">'
+    + '<input id="facts-filter-input" class="form-input" type="text" placeholder="Filter by vendor name..." oninput="filterFactsTable(this.value)" style="max-width:320px">'
+    + '</div>';
+
+  if (items.length === 0) {
+    return filterHtml
+      + '<div class="card"><div class="card-body">'
+      + '<div class="empty-state">'
+      + '<div class="empty-state-title">No facts yet</div>'
+      + '<p>Upload a document to get started.</p>'
+      + '<button class="empty-action" onclick="navigate(\'upload\')">Go to Upload</button>'
+      + '</div></div></div>';
+  }
+
+  var rows = items.map(function(f) {
+    var itemCount = f.items ? f.items.length : (f.item_count || 0);
+    var docType = f.document_type || f.type || '—';
+    return '<tr class="fact-row" id="fact-row-' + escHtml(String(f.id)) + '" onclick="toggleFactDetail(' + escHtml(String(f.id)) + ')" data-vendor="' + escHtml((f.vendor || '').toLowerCase()) + '">'
+      + '<td><span class="fact-expand-icon" id="fact-icon-' + escHtml(String(f.id)) + '">&#9654;</span>' + escHtml(f.date || '—') + '</td>'
+      + '<td>' + escHtml(f.vendor || '—') + '</td>'
+      + '<td style="text-align:right">' + escHtml(f.total != null ? Number(f.total).toFixed(2) : '—') + '</td>'
+      + '<td>' + escHtml(f.currency || '—') + '</td>'
+      + '<td><span class="badge badge-muted">' + escHtml(docType) + '</span></td>'
+      + '<td style="text-align:center">' + itemCount + '</td>'
+      + '<td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); toggleFactDetail(' + escHtml(String(f.id)) + ')">Details</button></td>'
+      + '</tr>';
+  }).join('');
+
+  var tableHtml = '<div class="card">'
+    + '<div class="card-header"><span class="card-title">Transactions</span>'
+    + '<span class="badge badge-muted">' + (data.total || items.length) + ' total</span></div>'
+    + '<div class="table-wrap"><table id="facts-table">'
+    + '<thead><tr>'
+    + '<th class="sortable" onclick="sortTable(\'facts-table\',0,\'date\')">Date<span class="sort-arrow">\u25B2</span></th>'
+    + '<th class="sortable" onclick="sortTable(\'facts-table\',1,\'string\')">Vendor<span class="sort-arrow">\u25B2</span></th>'
+    + '<th class="sortable" onclick="sortTable(\'facts-table\',2,\'number\')" style="text-align:right">Amount<span class="sort-arrow">\u25B2</span></th>'
+    + '<th>Currency</th>'
+    + '<th>Type</th>'
+    + '<th style="text-align:center">Items</th>'
+    + '<th>Actions</th>'
+    + '</tr></thead>'
+    + '<tbody id="facts-table-body">' + rows + '</tbody>'
+    + '</table></div></div>';
+
+  var paginationHtml = '';
+  if (totalPages > 1) {
+    paginationHtml = '<div class="pagination">'
+      + '<button class="btn btn-secondary btn-sm" onclick="factsPageNav(-1)"' + (factsPage <= 1 ? ' disabled' : '') + '>Prev</button>'
+      + '<span>Page ' + factsPage + ' of ' + totalPages + '</span>'
+      + '<button class="btn btn-secondary btn-sm" onclick="factsPageNav(1)"' + (factsPage >= totalPages ? ' disabled' : '') + '>Next</button>'
+      + '</div>';
+  }
+
+  return filterHtml + tableHtml + paginationHtml;
+}
+
+function factsPageNav(delta) {
+  if (!factsData) return;
+  var totalPages = factsData.pages || 1;
+  var newPage = Math.min(Math.max(1, factsPage + delta), totalPages);
+  if (newPage === factsPage) return;
+  factsPage = newPage;
+  renderFacts();
+}
+
+function filterFactsTable(query) {
+  var q = (query || '').toLowerCase().trim();
+  var tbody = document.getElementById('facts-table-body');
+  if (!tbody) return;
+  var rows = tbody.querySelectorAll('tr.fact-row');
+  rows.forEach(function(row) {
+    var vendor = row.getAttribute('data-vendor') || '';
+    var match = !q || vendor.indexOf(q) !== -1;
+    row.style.display = match ? '' : 'none';
+    // Also hide any detail row for hidden facts
+    var detailRow = row.nextElementSibling;
+    if (detailRow && detailRow.classList.contains('detail-row')) {
+      detailRow.style.display = match ? '' : 'none';
+    }
+  });
+}
+
+async function toggleFactDetail(factId) {
+  var existingDetail = document.getElementById('fact-detail-' + factId);
+  var icon = document.getElementById('fact-icon-' + factId);
+  var factRow = document.getElementById('fact-row-' + factId);
+
+  if (existingDetail) {
+    existingDetail.remove();
+    if (icon) icon.classList.remove('open');
+    if (factRow) factRow.classList.remove('fact-row-expanded');
+    delete factsExpandedIds[factId];
+    return;
+  }
+
+  if (!factRow) return;
+
+  // Show loading detail row
+  var loadingRow = document.createElement('tr');
+  loadingRow.id = 'fact-detail-' + factId;
+  loadingRow.className = 'detail-row';
+  loadingRow.innerHTML = '<td colspan="7"><div class="loading-state" style="padding:16px"><span class="spinner"></span><span>Loading items...</span></div></td>';
+  factRow.insertAdjacentElement('afterend', loadingRow);
+  if (icon) icon.classList.add('open');
+  if (factRow) factRow.classList.add('fact-row-expanded');
+
+  try {
+    var fact = await apiGet('/api/v1/facts/' + factId);
+    if (!fact) {
+      loadingRow.remove();
+      if (icon) icon.classList.remove('open');
+      if (factRow) factRow.classList.remove('fact-row-expanded');
+      return;
+    }
+
+    var factItems = fact.items || [];
+    var detailHtml;
+
+    if (factItems.length === 0) {
+      detailHtml = '<td colspan="7"><div class="empty-state" style="padding:12px"><p>No line items.</p></div></td>';
+    } else {
+      var itemRows = factItems.map(function(item) {
+        var unitPrice = item.unit_price != null ? Number(item.unit_price).toFixed(2) : '—';
+        var totalPrice = item.total != null ? Number(item.total).toFixed(2) : (item.amount != null ? Number(item.amount).toFixed(2) : '—');
+        return '<tr>'
+          + '<td>' + escHtml(item.name || '—') + '</td>'
+          + '<td style="text-align:right">' + escHtml(item.quantity != null ? String(item.quantity) : '—') + '</td>'
+          + '<td style="text-align:right">' + escHtml(unitPrice) + '</td>'
+          + '<td style="text-align:right">' + escHtml(totalPrice) + '</td>'
+          + '<td>' + escHtml(item.category || '—') + '</td>'
+          + '<td>' + escHtml(item.brand || '—') + '</td>'
+          + '</tr>';
+      }).join('');
+
+      detailHtml = '<td colspan="7">'
+        + '<div class="table-wrap"><table>'
+        + '<thead><tr>'
+        + '<th>Item Name</th>'
+        + '<th style="text-align:right">Qty</th>'
+        + '<th style="text-align:right">Unit Price</th>'
+        + '<th style="text-align:right">Total</th>'
+        + '<th>Category</th>'
+        + '<th>Brand</th>'
+        + '</tr></thead>'
+        + '<tbody>' + itemRows + '</tbody>'
+        + '</table></div>'
+        + '</td>';
+    }
+
+    loadingRow.innerHTML = detailHtml;
+    factsExpandedIds[factId] = true;
+
+  } catch(e) {
+    loadingRow.innerHTML = '<td colspan="7"><div class="loading-state" style="color:var(--danger);padding:12px">' + escHtml(e.message) + '</div></td>';
+    showToast(e.message, 'error');
+  }
+}
+
+// ============================================================
+// Upload
+// ============================================================
+var uploadSelectedFile = null;
+
+function renderUpload() {
+  var html = '<div class="card"><div class="card-body">'
+    + '<div id="upload-drop-zone" class="drop-zone">'
+    + '<div class="drop-zone-icon">&#128196;</div>'
+    + '<div class="drop-zone-text">Drag and drop a file here</div>'
+    + '<div class="drop-zone-hint">or click to browse</div>'
+    + '<input type="file" id="upload-file-input" accept="image/*,.pdf,.jpg,.jpeg,.png,.heic,.webp" style="display:none">'
+    + '</div>'
+    + '<div id="upload-file-name" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>'
+    + '<div class="upload-form">'
+    + '<div class="form-row">'
+    + '<div class="form-group" style="max-width:220px">'
+    + '<label class="form-label" for="upload-doc-type">Document Type</label>'
+    + '<select id="upload-doc-type" class="form-select">'
+    + '<option value="receipt">Receipt</option>'
+    + '<option value="invoice">Invoice</option>'
+    + '<option value="payment_confirmation">Payment Confirmation</option>'
+    + '<option value="bank_statement">Bank Statement</option>'
+    + '<option value="warranty">Warranty</option>'
+    + '<option value="contract">Contract</option>'
+    + '</select>'
+    + '</div>'
+    + '<button class="btn btn-primary" id="upload-submit-btn" style="align-self:flex-end" disabled>Upload &amp; Process</button>'
+    + '</div>'
+    + '</div>'
+    + '</div></div>'
+    + '<div id="upload-progress" style="display:none;margin-top:16px">'
+    + '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Processing document...</span></div>'
+    + '</div>'
+    + '<div id="upload-result" class="upload-result"></div>';
+
+  setHtml('upload-content', html);
+  uploadSelectedFile = null;
+  attachUploadEvents();
+}
+
+function attachUploadEvents() {
+  var dropZone = document.getElementById('upload-drop-zone');
+  var fileInput = document.getElementById('upload-file-input');
+  var submitBtn = document.getElementById('upload-submit-btn');
+
+  if (!dropZone || !fileInput || !submitBtn) return;
+
+  // Click to browse
+  dropZone.addEventListener('click', function() {
+    fileInput.click();
+  });
+
+  // File input change
+  fileInput.addEventListener('change', function() {
+    if (fileInput.files && fileInput.files.length > 0) {
+      selectUploadFile(fileInput.files[0]);
+    }
+  });
+
+  // Drag events
+  dropZone.addEventListener('dragenter', function(e) {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+  });
+  dropZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      selectUploadFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  // Submit
+  submitBtn.addEventListener('click', function() {
+    submitUpload();
+  });
+}
+
+function selectUploadFile(file) {
+  uploadSelectedFile = file;
+  var nameEl = document.getElementById('upload-file-name');
+  var submitBtn = document.getElementById('upload-submit-btn');
+  if (nameEl) nameEl.textContent = 'Selected: ' + file.name + ' (' + formatFileSize(file.size) + ')';
+  if (submitBtn) submitBtn.disabled = false;
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function submitUpload() {
+  if (!uploadSelectedFile) {
+    showToast('Please select a file first', 'error');
+    return;
+  }
+
+  var submitBtn = document.getElementById('upload-submit-btn');
+  var progressEl = document.getElementById('upload-progress');
+  var resultEl = document.getElementById('upload-result');
+  var docType = document.getElementById('upload-doc-type').value;
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (progressEl) progressEl.style.display = 'block';
+  if (resultEl) resultEl.innerHTML = '';
+
+  var formData = new FormData();
+  formData.append('file', uploadSelectedFile);
+  formData.append('type', docType);
+
+  try {
+    var result = await apiFetch('/api/v1/process', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (progressEl) progressEl.style.display = 'none';
+
+    if (!result) {
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+
+    var vendor = result.vendor || result.vendor_name || '—';
+    var amount = result.total != null ? Number(result.total).toFixed(2) : (result.amount != null ? Number(result.amount).toFixed(2) : '—');
+    var date = result.date || '—';
+    var currency = result.currency || '';
+    var itemCount = result.items ? result.items.length : (result.item_count || 0);
+    var factId = result.fact_id || result.id || null;
+
+    var summaryHtml = '<div class="card">'
+      + '<div class="card-header"><span class="card-title">Extraction Result</span>'
+      + '<span class="badge badge-success">success</span></div>'
+      + '<div class="card-body">'
+      + '<div class="stats-grid">'
+      + statCard('Vendor', escHtml(vendor), '')
+      + statCard('Amount', escHtml(amount) + ' ' + escHtml(currency), '')
+      + statCard('Date', escHtml(date), '')
+      + statCard('Items', itemCount, '')
+      + '</div>';
+
+    if (factId) {
+      summaryHtml += '<button class="btn btn-primary" onclick="factsPage=1;navigate(\'facts\')">View Facts</button>';
+    }
+
+    summaryHtml += '</div></div>';
+
+    if (resultEl) resultEl.innerHTML = summaryHtml;
+    showToast('Document processed successfully', 'success');
+
+  } catch(e) {
+    if (progressEl) progressEl.style.display = 'none';
+    if (submitBtn) submitBtn.disabled = false;
+
+    var errorHtml = '<div class="card">'
+      + '<div class="card-header"><span class="card-title">Processing Error</span>'
+      + '<span class="badge badge-danger">error</span></div>'
+      + '<div class="card-body"><p style="color:var(--danger)">' + escHtml(e.message) + '</p></div></div>';
+    if (resultEl) resultEl.innerHTML = errorHtml;
+    showToast(e.message, 'error');
+  }
+}
+
+function buildCoverageCard(coverage) {
+  var vendors = (coverage && coverage.vendors) || [];
+  if (vendors.length === 0) {
+    return '<div class="card" style="margin-top:16px"><div class="card-header"><span class="card-title">Vendor Coverage</span></div>'
+      + '<div class="card-body"><div class="empty-state"><div class="empty-state-title">No vendor data</div>'
+      + '<p>Coverage data will appear here after documents are processed.</p></div></div></div>';
+  }
+
+  var rows = vendors.map(function(v) {
+    var pct = v.coverage_pct || 0;
+    var pctCls = pct < 30 ? 'coverage-pct-low' : (pct < 70 ? 'coverage-pct-med' : 'coverage-pct-high');
+
+    var sourcesHtml = '';
+    if (v.sources) {
+      Object.keys(v.sources).sort().forEach(function(s) {
+        sourcesHtml += sourceChip(s) + '&nbsp;' + v.sources[s] + '&ensp;';
+      });
+    }
+    if (!sourcesHtml) sourcesHtml = '<span style="color:var(--muted)">none</span>';
+
+    return '<tr>'
+      + '<td><strong>' + escHtml(v.vendor || '—') + '</strong></td>'
+      + '<td style="color:var(--muted);font-size:12px">' + escHtml(v.vendor_key || '—') + '</td>'
+      + '<td style="text-align:right">' + v.total_items + '</td>'
+      + '<td style="text-align:right">' + (v.enriched_items || 0) + '</td>'
+      + '<td style="min-width:120px">'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + '<div class="coverage-bar ' + pctCls + '"><div class="coverage-bar-fill" style="width:' + pct + '%"></div></div>'
+      + '<span style="font-size:12px;min-width:36px;text-align:right">' + Math.round(pct) + '%</span>'
+      + '</div></td>'
+      + '<td>' + sourcesHtml + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<div class="card" style="margin-top:16px">'
+    + '<div class="card-header"><span class="card-title">Vendor Coverage</span>'
+    + '<span class="badge badge-muted">' + vendors.length + ' vendors</span></div>'
+    + '<div class="table-wrap"><table><thead><tr>'
+    + '<th>Vendor</th><th>Key</th><th style="text-align:right">Items</th>'
+    + '<th style="text-align:right">Enriched</th><th>Coverage</th><th>Sources</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+}
+
+// ============================================================
+// Analytics Dashboard
+// ============================================================
+async function renderAnalytics() {
+  setLoading('analytics-content');
+
+  var summary, subscriptions;
+  try {
+    var results = await Promise.all([
+      apiGet('/api/v1/analytics/spending-summary'),
+      apiGet('/api/v1/analytics/subscriptions')
+    ]);
+    summary = results[0];
+    subscriptions = results[1];
+  } catch(e) {
+    setHtml('analytics-content', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+    return;
+  }
+
+  if (!summary) return;
+
+  var html = buildAnalyticsStats(summary)
+    + buildCategoryBreakdown(summary)
+    + buildTopVendors(summary)
+    + buildSubscriptionsCard(subscriptions);
+
+  setHtml('analytics-content', html);
+}
+
+function buildAnalyticsStats(summary) {
+  var totalSpent = summary.total_spent != null ? Number(summary.total_spent).toFixed(2) : '0.00';
+  var txCount = summary.transaction_count || 0;
+  var avgBasket = summary.avg_basket_size != null ? Number(summary.avg_basket_size).toFixed(2) : '0.00';
+  var topCurrency = summary.top_currency || '—';
+
+  return '<div class="stats-grid">'
+    + statCard('Total Spent', escHtml(totalSpent), 'current month')
+    + statCard('Transactions', txCount, '')
+    + statCard('Avg Basket', escHtml(avgBasket), '')
+    + statCard('Top Currency', escHtml(topCurrency), '')
+    + '</div>';
+}
+
+function buildCategoryBreakdown(summary) {
+  var categories = (summary.by_category || []);
+  if (categories.length === 0) {
+    return '<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Category Breakdown</span></div>'
+      + '<div class="card-body"><div class="empty-state"><p>No spending data available. Process some documents first.</p>'
+      + '<button class="empty-action" onclick="navigate(\'upload\')">Go to Upload</button></div></div></div>';
+  }
+
+  var maxAmount = 0;
+  categories.forEach(function(c) {
+    var amt = Math.abs(Number(c.total || c.amount || 0));
+    if (amt > maxAmount) maxAmount = amt;
+  });
+
+  var barsHtml = categories.map(function(c) {
+    var amt = Math.abs(Number(c.total || c.amount || 0));
+    var pct = maxAmount > 0 ? (amt / maxAmount * 100) : 0;
+    return '<div class="bar-row">'
+      + '<div class="bar-label" title="' + escHtml(c.category || c.name || '—') + '">' + escHtml(c.category || c.name || '—') + '</div>'
+      + '<div class="bar-track"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>'
+      + '<div class="bar-amount">' + amt.toFixed(2) + '</div>'
+      + '</div>';
+  }).join('');
+
+  return '<div class="card" style="margin-bottom:20px">'
+    + '<div class="card-header"><span class="card-title">Category Breakdown</span></div>'
+    + '<div class="card-body"><div class="bar-chart">' + barsHtml + '</div></div></div>';
+}
+
+function buildTopVendors(summary) {
+  var vendors = (summary.by_vendor || []);
+  if (vendors.length === 0) {
+    return '<div class="card" style="margin-bottom:20px"><div class="card-header"><span class="card-title">Top Vendors</span></div>'
+      + '<div class="card-body"><div class="empty-state"><p>No spending data available. Process some documents first.</p>'
+      + '<button class="empty-action" onclick="navigate(\'upload\')">Go to Upload</button></div></div></div>';
+  }
+
+  var top10 = vendors.slice(0, 10);
+  var rows = top10.map(function(v) {
+    var total = Number(v.total || v.amount || 0).toFixed(2);
+    var count = v.count || v.transaction_count || 0;
+    var avg = count > 0 ? (Number(v.total || v.amount || 0) / count).toFixed(2) : '0.00';
+    return '<tr>'
+      + '<td><strong>' + escHtml(v.vendor || v.name || '—') + '</strong></td>'
+      + '<td style="text-align:right">' + escHtml(total) + '</td>'
+      + '<td style="text-align:center">' + count + '</td>'
+      + '<td style="text-align:right">' + escHtml(avg) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<div class="card" style="margin-bottom:20px">'
+    + '<div class="card-header"><span class="card-title">Top Vendors</span>'
+    + '<span class="badge badge-muted">top 10</span></div>'
+    + '<div class="table-wrap"><table id="analytics-vendors-table">'
+    + '<thead><tr>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-vendors-table\',0,\'string\')">Vendor<span class="sort-arrow">\u25B2</span></th>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-vendors-table\',1,\'number\')" style="text-align:right">Total<span class="sort-arrow">\u25B2</span></th>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-vendors-table\',2,\'number\')" style="text-align:center">Count<span class="sort-arrow">\u25B2</span></th>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-vendors-table\',3,\'number\')" style="text-align:right">Avg<span class="sort-arrow">\u25B2</span></th>'
+    + '</tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div></div>';
+}
+
+function buildSubscriptionsCard(subscriptions) {
+  var items = (subscriptions && (subscriptions.subscriptions || subscriptions)) || [];
+  if (!Array.isArray(items)) items = [];
+
+  if (items.length === 0) {
+    return '<div class="card"><div class="card-header"><span class="card-title">Subscriptions</span></div>'
+      + '<div class="card-body"><div class="empty-state"><p>No recurring payments detected. Process more documents to enable subscription detection.</p></div></div></div>';
+  }
+
+  var rows = items.map(function(s) {
+    var amount = s.amount != null ? Number(s.amount).toFixed(2) : '—';
+    var period = s.period || s.frequency || '—';
+    var nextExpected = s.next_expected || s.next_date || '—';
+    return '<tr>'
+      + '<td><strong>' + escHtml(s.vendor || s.name || '—') + '</strong></td>'
+      + '<td style="text-align:right">' + escHtml(amount) + '</td>'
+      + '<td>' + escHtml(period) + '</td>'
+      + '<td>' + escHtml(nextExpected) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<div class="card">'
+    + '<div class="card-header"><span class="card-title">Subscriptions</span>'
+    + '<span class="badge badge-muted">' + items.length + '</span></div>'
+    + '<div class="table-wrap"><table id="analytics-subs-table">'
+    + '<thead><tr>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-subs-table\',0,\'string\')">Vendor<span class="sort-arrow">\u25B2</span></th>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-subs-table\',1,\'number\')" style="text-align:right">Amount<span class="sort-arrow">\u25B2</span></th>'
+    + '<th>Period</th>'
+    + '<th class="sortable" onclick="sortTable(\'analytics-subs-table\',3,\'date\')">Next Expected<span class="sort-arrow">\u25B2</span></th>'
+    + '</tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div></div>';
+}
+
+// ============================================================
+// Search
+// ============================================================
+function renderSearch() {
+  var html = '<div class="search-row">'
+    + '<input id="search-input" class="form-input" type="text" placeholder="Search transactions, items, documents...">'
+    + '<button class="btn btn-primary" id="search-submit-btn" onclick="executeSearch()">Search</button>'
+    + '</div>'
+    + '<div id="search-results">'
+    + '<div class="empty-state"><p>Enter a search term to find transactions, items, or documents.</p></div>'
+    + '</div>';
+
+  setHtml('search-content', html);
+
+  var input = document.getElementById('search-input');
+  if (input) {
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') executeSearch();
+    });
+    input.focus();
+  }
+}
+
+async function executeSearch() {
+  var input = document.getElementById('search-input');
+  var query = input ? input.value.trim() : '';
+  if (!query) {
+    showToast('Please enter a search term', 'error');
+    return;
+  }
+
+  var resultsEl = document.getElementById('search-results');
+  if (resultsEl) resultsEl.innerHTML = '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Searching...</span></div>';
+
+  try {
+    var data = await apiPost('/api/v1/search', { query: query, limit: 20 });
+    if (!data) return;
+    setHtml('search-results', buildSearchResults(data, query));
+  } catch(e) {
+    setHtml('search-results', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+  }
+}
+
+function buildSearchResults(data, query) {
+  var transactions = data.transactions || data.facts || [];
+  var items = data.items || [];
+  var documents = data.documents || [];
+
+  var hasResults = transactions.length > 0 || items.length > 0 || documents.length > 0;
+
+  if (!hasResults) {
+    var queryLabel = query ? escHtml(query) : '';
+    return '<div class="empty-state">'
+      + '<div class="empty-state-title">No results found' + (queryLabel ? ' for \'' + queryLabel + '\'' : '') + '</div>'
+      + '<p>Try a different search term.</p>'
+      + '</div>';
+  }
+
+  var html = '';
+
+  if (transactions.length > 0) {
+    var txRows = transactions.map(function(f) {
+      var amount = f.total != null ? Number(f.total).toFixed(2) : (f.amount != null ? Number(f.amount).toFixed(2) : '—');
+      return '<tr style="cursor:pointer" onclick="navigate(\'facts\')">'
+        + '<td>' + escHtml(f.date || '—') + '</td>'
+        + '<td><strong>' + escHtml(f.vendor || '—') + '</strong></td>'
+        + '<td style="text-align:right">' + escHtml(amount) + '</td>'
+        + '<td>' + escHtml(f.currency || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+
+    html += '<div class="card" style="margin-bottom:16px">'
+      + '<div class="card-header"><span class="card-title">Transactions</span>'
+      + '<span class="badge badge-muted">' + transactions.length + '</span></div>'
+      + '<div class="table-wrap"><table><thead><tr>'
+      + '<th>Date</th><th>Vendor</th><th style="text-align:right">Amount</th><th>Currency</th>'
+      + '</tr></thead><tbody>' + txRows + '</tbody></table></div></div>';
+  }
+
+  if (items.length > 0) {
+    var itemRows = items.map(function(item) {
+      var price = item.total != null ? Number(item.total).toFixed(2) : (item.amount != null ? Number(item.amount).toFixed(2) : '—');
+      return '<tr>'
+        + '<td><strong>' + escHtml(item.name || '—') + '</strong></td>'
+        + '<td>' + escHtml(item.vendor || '—') + '</td>'
+        + '<td style="text-align:right">' + escHtml(price) + '</td>'
+        + '<td>' + escHtml(item.category || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+
+    html += '<div class="card" style="margin-bottom:16px">'
+      + '<div class="card-header"><span class="card-title">Items</span>'
+      + '<span class="badge badge-muted">' + items.length + '</span></div>'
+      + '<div class="table-wrap"><table><thead><tr>'
+      + '<th>Name</th><th>Vendor</th><th style="text-align:right">Price</th><th>Category</th>'
+      + '</tr></thead><tbody>' + itemRows + '</tbody></table></div></div>';
+  }
+
+  if (documents.length > 0) {
+    var docRows = documents.map(function(doc) {
+      return '<tr>'
+        + '<td><strong>' + escHtml(doc.filename || doc.source || '—') + '</strong></td>'
+        + '<td>' + escHtml(doc.type || doc.document_type || '—') + '</td>'
+        + '<td>' + escHtml(doc.date || doc.created_at || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+
+    html += '<div class="card" style="margin-bottom:16px">'
+      + '<div class="card-header"><span class="card-title">Documents</span>'
+      + '<span class="badge badge-muted">' + documents.length + '</span></div>'
+      + '<div class="table-wrap"><table><thead><tr>'
+      + '<th>Filename</th><th>Type</th><th>Date</th>'
+      + '</tr></thead><tbody>' + docRows + '</tbody></table></div></div>';
+  }
+
+  return html;
+}
+</script>
+</body>
+</html>

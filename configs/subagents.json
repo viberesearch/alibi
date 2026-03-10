@@ -1,0 +1,103 @@
+{
+  "version": "1.0.0",
+  "subagents": {
+    "security-reviewer": {
+      "description": "Audits code for security vulnerabilities and dependency risks",
+      "context7_libs": ["owasp", "trivy"],
+      "tools": ["trivy", "grep", "read", "bash"],
+      "mcp_tools": ["search_decisions"],
+      "decision_context": true,
+      "context_hint": "Check for security-related patterns and exceptions",
+      "checklist": [
+        "OWASP Top 10 vulnerabilities",
+        "Input validation and sanitization",
+        "Authentication and authorization flows",
+        "Secrets exposure (env vars, hardcoded)",
+        "SQL injection and XSS vulnerabilities",
+        "Dependency vulnerabilities (trivy scan)",
+        "Rate limiting and DoS protection"
+      ]
+    },
+    "code-reviewer": {
+      "description": "Reviews code quality, API design, and performance",
+      "context7_libs": ["fastapi", "openapi", "asyncio"],
+      "tools": ["read", "grep", "bash"],
+      "checklist": [
+        "RESTful API conventions",
+        "Response formats and error handling",
+        "Documentation completeness",
+        "N+1 query detection",
+        "Async/await usage patterns",
+        "Caching opportunities",
+        "Connection pooling",
+        "Memory and CPU efficiency"
+      ]
+    },
+    "test-runner": {
+      "description": "Executes tests, analyzes coverage, and validates quality",
+      "context7_libs": ["pytest", "coverage"],
+      "tools": ["bash", "read", "grep"],
+      "checklist": [
+        "Test execution (pytest)",
+        "Coverage analysis (>80% target)",
+        "Missing test cases",
+        "Edge cases and error paths",
+        "Integration vs unit test balance",
+        "Mock and fixture usage",
+        "Test performance"
+      ]
+    },
+    "database-admin": {
+      "description": "Reviews database design, queries, and migrations",
+      "context7_libs": ["postgresql", "supabase"],
+      "tools": ["read", "grep", "bash"],
+      "checklist": [
+        "Query performance (EXPLAIN)",
+        "Index usage and optimization",
+        "RLS policies (Supabase)",
+        "Migration safety",
+        "Schema normalization",
+        "Foreign key constraints",
+        "Connection pooling"
+      ]
+    },
+    "devops-reviewer": {
+      "description": "Reviews CI/CD, Docker, dependencies, and infrastructure",
+      "context7_libs": ["docker", "github-actions", "uv"],
+      "tools": ["bash", "read", "grep"],
+      "checklist": [
+        "Dockerfile optimization (multi-stage, layer caching)",
+        "Docker Compose configuration",
+        "CI/CD pipeline efficiency",
+        "Environment variable management",
+        "Secret handling in pipelines",
+        "Build caching strategies",
+        "Dependency version compatibility",
+        "Lock file consistency (uv.lock)",
+        "Health checks and monitoring"
+      ]
+    },
+    "decision-auditor": {
+      "description": "Reviews decision traces and suggests patterns for promotion",
+      "context7_libs": [],
+      "tools": ["read", "grep", "bash"],
+      "mcp_tools": ["search_decisions"],
+      "decision_context": true,
+      "checklist": [
+        "Review recent traces (/show-traces)",
+        "Identify reusable patterns",
+        "Check for duplicate decisions",
+        "Flag corrections for learning",
+        "Suggest promotions to global patterns",
+        "Review exception frequency",
+        "Validate trace quality"
+      ]
+    }
+  },
+  "local_llm_alternatives": {
+    "description": "For operational apps, use local Ollama models instead of subagents",
+    "code_review": "qwen2.5-coder:32b-instruct-q4_K_M",
+    "summarization": "qwen2.5:7b-instruct-q8_0",
+    "embeddings": "nomic-embed-text"
+  }
+}

@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# User data (NEVER commit personal financial data)
+data/yaml_store/
+data/yaml_store.backup*/
+data/*.db
+data/*.db.bak
+data/*.db.backup*
+data/uploads/
+data/*.log
+data/*.txt
+data/vendor_aliases.yaml
+data/unit_aliases.yaml
+data/lancedb/
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+
+# Claude Code local settings (keep commands/ tracked)
+.claude/*
+!.claude/commands/
+!.claude/templates/
+!.claude/skills/
+!.claude/hooks/
+
+# Machine-specific MCP config (use .mcp.json.silicon or .mcp.json.intel templates)
+.mcp.json
+
+# Private development files
+.claude/
+implementation-logs/
+ARCHIVE/
+excalidraw.log
+data/
+PROJECT_CONTEXT.md
+docs/CONTINUATION_PROMPT.md
+docs/SESSION_HISTORY.md
+docs/API_FIRST_ARCHITECTURE.md
+docs/ADR_STRUCTURED_PRODUCT_DATA.md
+docs/TABLEPLUS_CORRECTIONS.md
+docs/IOS_SHORTCUTS.md
+docs/sample-receipt-note.md
+docs/PUBLIC_RELEASE_PLAN.md
+docs/handoffs/
+docs/archive/
+
+# Database files
+*.db
+*.db.bak
+*.db.backup*
