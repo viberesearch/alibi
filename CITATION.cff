@@ -29,8 +29,8 @@ preferred-citation:
   authors:
     - family-names: Zharnikov
       given-names: Dmitry
-      email: dmitry@spectralbranding.com
-  title: "The alibi problem: Epistemic foundations of multi-source data reconciliation"
+      orcid: "https://orcid.org/0009-0000-6893-9231"
+  title: "The Atom-Cloud-Fact Epistemological Pipeline: From financial document processing to brand perception modeling"
   year: 2026
   doi: "10.5281/zenodo.18944770"
   url: "https://doi.org/10.5281/zenodo.18944770"
