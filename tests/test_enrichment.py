@@ -787,11 +787,11 @@ INSERT INTO cloud_bundles (cloud_id, bundle_id, match_type)
 
         bus.emit(EventType.FACT_CREATED, {"document_id": "doc-sub"})
 
-        # Wait for background thread
-        deadline = time.monotonic() + 2.0
+        # Wait for background thread to complete enrichment
+        deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             row = db.fetchone("SELECT brand FROM fact_items WHERE id = 'fi-sub'")
-            if row and row["brand"] == "Ferrero":
+            if row and row["brand"] == "Ferrero" and sub.enrichment_count >= 1:
                 break
             time.sleep(0.05)
 
