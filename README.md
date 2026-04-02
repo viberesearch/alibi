@@ -573,7 +573,7 @@ Contributions are welcome. Please:
 
 The Atom-Cloud-Fact data model and the epistemological foundations of multi-source data reconciliation are described in:
 
-> Zharnikov, D. (2026). *The alibi problem: Epistemic foundations of multi-source data reconciliation*. Available at: https://github.com/spectralbranding/sbt-papers/tree/main/alibi-epistemology
+> Zharnikov, D. (2026). *The atom-cloud-fact epistemological pipeline: From financial document processing to brand perception modeling*. Available at: https://github.com/spectralbranding/sbt-papers/tree/main/alibi-epistemology
 
 ## How to Cite
 
