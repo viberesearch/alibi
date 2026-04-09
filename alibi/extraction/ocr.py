@@ -7,7 +7,7 @@ Four-tier retry strategy for robust text extraction:
 1. Normal OCR with primary model
 2. Enhanced preprocessing (contrast + sharpen)
 2.5. Rotation detection (180°, 90° CW, 90° CCW) for rotated scans
-3. Fallback model (e.g., minicpm-v) for non-Latin scripts
+3. Fallback model (e.g., gemma4) for non-Latin scripts
 
 For extreme aspect ratio images (>3:1), slices into overlapping bands,
 OCRs each band, and concatenates the text.
@@ -493,7 +493,7 @@ def ocr_image_with_retry(
     1. Normal OCR with primary model (glm-ocr)
     2. Enhanced preprocessing (contrast + sharpen) with primary model
     2.5. Rotation detection — try 180°, 90° CW, 90° CCW
-    3. Fallback model (e.g., minicpm-v) if configured and still insufficient
+    3. Fallback model (e.g., gemma4) if configured and still insufficient
 
     When ``country`` is a non-Latin country code and a fallback model is
     configured, the fallback model is used directly (skipping the primary
@@ -597,7 +597,7 @@ def _ocr_with_retry_inner(
         if len(best_text) >= MIN_OCR_CHARS:
             return best_text, True
 
-    # Tier 3: Fallback model (e.g., minicpm-v for non-Latin scripts)
+    # Tier 3: Fallback model (e.g., gemma4 for non-Latin scripts)
     if fallback_model:
         logger.info(
             f"OCR still insufficient ({len(best_text)} chars) for "
