@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 _RETRY_EXCEPTIONS = (httpx.TimeoutException, httpx.ConnectError)
 
 
+_THINKING_MODELS = ("gemma4", "gemma3", "exaone", "sarvam")
+
+
 @with_retry(max_attempts=3, base_delay=2.0, exceptions=_RETRY_EXCEPTIONS)
 def _call_ollama_text(
     ollama_url: str,
@@ -28,20 +31,54 @@ def _call_ollama_text(
     prompt: str,
     timeout: float,
 ) -> dict[str, Any]:
-    """Call Ollama /api/generate with text-only prompt (no images)."""
+    """Call Ollama with text-only prompt.
+
+    Uses /api/chat for thinking models (Gemma4 etc.) because /api/generate
+    silently consumes thinking tokens from the num_predict budget and can
+    return empty responses. See fleet-standards LOCAL_MODELS.md.
+    """
+    config = get_config()
+    is_thinking_model = any(t in model for t in _THINKING_MODELS)
     try:
         with httpx.Client(timeout=timeout) as client:
-            response = client.post(
-                f"{ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1},
-                },
-            )
-            response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+            if is_thinking_model:
+                # Chat endpoint returns thinking + content correctly
+                response = client.post(
+                    f"{ollama_url}/api/chat",
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": False,
+                        "keep_alive": config.ollama_keep_alive,
+                        "options": {
+                            "temperature": 0.1,
+                            "num_predict": config.ollama_num_predict,
+                        },
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                # Normalize chat response to generate-style format
+                return {
+                    "response": data.get("message", {}).get("content", ""),
+                    **{k: v for k, v in data.items() if k != "message"},
+                }
+            else:
+                response = client.post(
+                    f"{ollama_url}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "keep_alive": config.ollama_keep_alive,
+                        "options": {
+                            "temperature": 0.1,
+                            "num_predict": config.ollama_num_predict,
+                        },
+                    },
+                )
+                response.raise_for_status()
+            return cast(dict[str, Any], response.json())
     except httpx.HTTPStatusError as e:
         raise VisionExtractionError(
             f"Structure HTTP error: {e.response.status_code}"

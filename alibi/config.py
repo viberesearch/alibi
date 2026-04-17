@@ -42,6 +42,10 @@ class Config(BaseSettings):
     ollama_ocr_model: str = Field(default="glm-ocr")
     ollama_ocr_fallback_model: Optional[str] = Field(default=None)
     ollama_structure_model: str = Field(default="qwen3:8b")
+    ollama_keep_alive: int = Field(default=300)  # seconds; 0 = unload immediately
+    ollama_num_predict: int = Field(
+        default=4096
+    )  # tokens; must be high for thinking models
     ocr_backend: str = Field(default="ollama")  # "ollama" or "doctr"
     # Skip LLM (Stage 3) when parser confidence is at or above this threshold.
     # Set to 1.1 to never skip. Default 0.9 skips LLM for well-parsed receipts.
