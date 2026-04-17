@@ -281,6 +281,7 @@ def structure_ocr_text_gemini(
                 response_mime_type="application/json",
                 response_schema=extraction_model,
                 temperature=0.1,
+                max_output_tokens=2048,
             ),
         )
 
@@ -386,6 +387,7 @@ def extract_from_image_gemini(
                 response_mime_type="application/json",
                 response_schema=extraction_model,
                 temperature=0.1,
+                max_output_tokens=2048,
             ),
         )
 
@@ -467,6 +469,7 @@ def structure_ocr_texts_gemini(
                 response_mime_type="application/json",
                 response_schema=ExtractionBatchResponse,
                 temperature=0.1,
+                max_output_tokens=4096,  # batch responses are larger
             ),
         )
 
