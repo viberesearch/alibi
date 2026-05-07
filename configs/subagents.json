@@ -96,7 +96,7 @@
   },
   "local_llm_alternatives": {
     "description": "For operational apps, use local Ollama models instead of subagents",
-    "code_review": "qwen2.5-coder:32b-instruct-q4_K_M",
+    "code_review": "qwen3.6:27b",
     "summarization": "qwen2.5:7b-instruct-q8_0",
     "embeddings": "nomic-embed-text"
   }
