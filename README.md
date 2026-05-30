@@ -84,7 +84,7 @@ uv sync --extra all
 ollama pull glm-ocr
 
 # Optional: pull the local LLM for Stage 3 correction
-ollama pull qwen3:8b
+ollama pull qwen3.5:9b
 ```
 
 ### Configure
@@ -125,7 +125,7 @@ Service Layer (alibi/services/ — 13 facades, ~88 functions)
   +---> Extraction Pipeline (3-stage hybrid)
   |       Stage 1: OCR (glm-ocr, local, 1.5-6s)
   |       Stage 2: Heuristic parser (~2ms, handles 64% of docs)
-  |       Stage 3: LLM correction (local qwen3:8b OR cloud Gemini 2.5 Flash)
+  |       Stage 3: LLM correction (local qwen3.5:9b OR cloud Gemini 3.5 Flash)
   |
   +---> Atom-Cloud-Fact Pipeline
   |       atoms/parser -> clouds/formation -> clouds/collapse
@@ -144,7 +144,7 @@ The extraction pipeline's Stage 3 (LLM correction) supports two backends:
 
 | | Local (Ollama) | Cloud (Gemini) |
 |---|---|---|
-| Model | qwen3:8b | Gemini 2.5 Flash |
+| Model | qwen3.5:9b | Gemini 3.5 Flash |
 | Cost | Free | ~$0.001/doc |
 | Speed | 2-5s | 0.5-1s |
 | RAM | ~8GB | None |
@@ -433,7 +433,7 @@ Build your own receiver with any framework (FastAPI, Express, etc.) and store in
 
 ### Vector Search (LanceDB)
 
-Optional semantic search across documents, facts, and items using `nomic-embed-text` embeddings via Ollama.
+Optional semantic search across documents, facts, and items using `nomic-embed-text-v2-moe` embeddings via Ollama.
 
 ```bash
 # Install vector dependencies

@@ -759,8 +759,7 @@ class TestEnrichmentSubscriber:
 
         # Build the full document → atom → bundle → cloud → fact → fact_item chain
         conn = db.get_connection()
-        conn.executescript(
-            """
+        conn.executescript("""
 INSERT INTO documents (id, file_path, file_hash)
     VALUES ('doc-sub', '/tmp/sub.jpg', 'hash-sub');
 INSERT INTO atoms (id, document_id, atom_type, data)
@@ -777,8 +776,7 @@ INSERT INTO bundle_atoms (bundle_id, atom_id, role)
     VALUES ('bundle-sub', 'atom-sub', 'basket_item');
 INSERT INTO cloud_bundles (cloud_id, bundle_id, match_type)
     VALUES ('cloud-sub', 'bundle-sub', 'manual');
-        """
-        )
+        """)
         conn.commit()
 
         bus = EventBus()

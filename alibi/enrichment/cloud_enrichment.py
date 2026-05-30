@@ -423,7 +423,7 @@ def refine_categories_by_cloud(
     updates items where the cloud model disagrees with the local LLM category.
 
     Uses the configured cloud_enrichment_model (default: claude-sonnet-4-6),
-    which has higher category accuracy than the local LLM (qwen3:8b).
+    which has higher category accuracy than the local LLM (qwen3.5:9b).
 
     Args:
         db: Database connection.

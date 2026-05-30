@@ -27,7 +27,6 @@ from alibi.db.models import (
 )
 from alibi.services import enrichment_review as svc
 
-
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------

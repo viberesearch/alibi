@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient
 
 from alibi.services import correction as svc
 
-
 # ---------------------------------------------------------------------------
 # correction.update_fact_item — allowlist
 # ---------------------------------------------------------------------------

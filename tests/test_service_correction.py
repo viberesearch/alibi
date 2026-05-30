@@ -11,7 +11,6 @@ import pytest
 from alibi.clouds.correction import CorrectionResult
 from alibi.services import correction as svc
 
-
 # ---------------------------------------------------------------------------
 # move_bundle — delegates to clouds.correction.move_bundle
 # ---------------------------------------------------------------------------

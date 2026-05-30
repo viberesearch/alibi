@@ -150,7 +150,7 @@ async def run_llm_enrichment(
 ) -> dict[str, Any]:
     """Trigger local LLM enrichment (Ollama) for unenriched items.
 
-    Uses the configured Ollama model (default: qwen3:8b).
+    Uses the configured Ollama model (default: qwen3.5:9b).
     """
     from alibi.enrichment.llm_enrichment import enrich_pending_by_llm
 

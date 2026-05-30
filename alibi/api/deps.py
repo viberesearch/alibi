@@ -10,7 +10,6 @@ from fastapi import Depends, Header, HTTPException, Query
 from alibi.config import Config, get_config
 from alibi.db.connection import DatabaseManager
 
-
 _db_instance: DatabaseManager | None = None
 
 

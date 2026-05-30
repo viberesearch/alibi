@@ -11,7 +11,6 @@ import pytest
 from alibi.db.connection import DatabaseManager
 from alibi.services import snapshot as snap_mod
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

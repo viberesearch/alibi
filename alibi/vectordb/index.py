@@ -164,9 +164,9 @@ class VectorIndex:
             if vendor:
                 parts.append(f"vendor: {vendor}")
             if raw_text:
-                # nomic-embed-text context is ~8192 tokens. JSON content
-                # tokenizes at ~2.5 chars/token, so cap at 2500 chars to
-                # stay safely within limits for structured text.
+                # nomic-embed-text-v2-moe context is 512 tokens; the embed
+                # call truncates server-side (truncate=true), so cap here only
+                # to bound payload size for structured text.
                 parts.append(raw_text[:2500])
 
         elif index_type == IndexType.ITEM:

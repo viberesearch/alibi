@@ -32,7 +32,6 @@ from alibi.extraction.schemas import (
 from alibi.processing.pipeline import ARTIFACT_TO_RECORD_TYPE, ProcessingPipeline
 from alibi.refiners.registry import get_refiner
 
-
 # ---------------------------------------------------------------------------
 # Schema tests
 # ---------------------------------------------------------------------------

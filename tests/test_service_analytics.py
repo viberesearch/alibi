@@ -14,7 +14,6 @@ from alibi.analytics.subscriptions import SubscriptionPattern
 from alibi.analytics.vendors import VendorDeduplicationReport
 from alibi.services import analytics as svc
 
-
 # ---------------------------------------------------------------------------
 # Helpers: lightweight stub return values
 # ---------------------------------------------------------------------------
