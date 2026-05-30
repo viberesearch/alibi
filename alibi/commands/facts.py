@@ -11,7 +11,6 @@ from rich.table import Table
 from alibi.commands.shared import console
 from alibi.db.connection import DatabaseManager, get_db
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -30,7 +30,6 @@ from alibi.db.models import (
 )
 from alibi.extraction.historical import make_vendor_key
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

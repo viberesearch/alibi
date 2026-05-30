@@ -190,7 +190,7 @@ def enrich_resolve(limit: int) -> None:
 def enrich_infer(limit: int, model: str | None) -> None:
     """Infer brand/category using local LLM for items without matches.
 
-    Uses qwen3:8b (or configured model) to infer brand and product
+    Uses qwen3.5:9b (or configured model) to infer brand and product
     category from item names, grouped by vendor for context.
     Requires Ollama to be running.
     """

@@ -14,7 +14,6 @@ from alibi.db.connection import DatabaseManager
 from alibi.db import v2_store
 from alibi.enrichment.product_resolver import ProductMatch, resolve_product
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

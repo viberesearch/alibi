@@ -1,6 +1,6 @@
 """LLM-based brand/category inference for product enrichment.
 
-Uses a local LLM (qwen3:8b by default) to infer brand and product
+Uses a local LLM (qwen3.5:9b by default) to infer brand and product
 category from item names when no barcode or fuzzy match is available.
 Items are batched per vendor for context-aware inference.
 """

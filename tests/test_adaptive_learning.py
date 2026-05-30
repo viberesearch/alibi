@@ -27,7 +27,6 @@ from alibi.services.correction_log import (
 )
 from alibi.services.correction import _propagate_to_siblings
 
-
 # ---------------------------------------------------------------------------
 # Phase 2 — record_extraction_observation
 # ---------------------------------------------------------------------------

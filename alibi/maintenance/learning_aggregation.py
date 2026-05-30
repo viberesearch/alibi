@@ -377,8 +377,7 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
     # Pattern 1: unit='pcs'/'other' but clearly weighed
     # Criteria: fractional unit_quantity in (0, 10), and
     # unit_quantity * unit_price is within 2% of total_price
-    pcs_weighed = conn.execute(
-        """
+    pcs_weighed = conn.execute("""
         SELECT id, name, unit, unit_quantity, unit_price, total_price
         FROM fact_items
         WHERE unit IN ('pcs', 'other')
@@ -388,8 +387,7 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
           AND unit_price IS NOT NULL AND unit_price > 0
           AND total_price IS NOT NULL AND total_price > 0
           AND ABS(total_price - unit_quantity * unit_price) / total_price < 0.02
-        """
-    ).fetchall()
+        """).fetchall()
 
     for row in pcs_weighed:
         item_id = row["id"]
@@ -410,8 +408,7 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
     # Pattern 2: unit='kg' with NULL unit_quantity but known prices
     # Backfill: unit_quantity = total_price / unit_price
     # Only when unit_price != total_price (otherwise ambiguous)
-    kg_no_uq = conn.execute(
-        """
+    kg_no_uq = conn.execute("""
         SELECT id, name, unit_price, total_price
         FROM fact_items
         WHERE unit = 'kg'
@@ -419,8 +416,7 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
           AND unit_price IS NOT NULL AND unit_price > 0
           AND total_price IS NOT NULL AND total_price > 0
           AND ABS(unit_price - total_price) > 0.01
-        """
-    ).fetchall()
+        """).fetchall()
 
     for row in kg_no_uq:
         item_id = row["id"]
@@ -472,8 +468,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
 
     # Pattern 1: unit='g' items with per-package pricing
     # unit_price * quantity ≈ total_price means unit_price is per-package
-    g_items = conn.execute(
-        """
+    g_items = conn.execute("""
         SELECT id, name, quantity, unit_quantity, unit_price, total_price
         FROM fact_items
         WHERE unit = 'g'
@@ -482,8 +477,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
           AND total_price IS NOT NULL AND total_price > 0
           AND quantity IS NOT NULL AND quantity > 0
           AND ABS(total_price - unit_price * quantity) / total_price < 0.05
-        """
-    ).fetchall()
+        """).fetchall()
 
     for row in g_items:
         item_id = row["id"]
@@ -516,8 +510,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
     # Pattern 2: unit='kg' items where unit_price still equals per-package
     # (already converted unit/unit_quantity but unit_price not updated)
     # Detect: unit=kg, unit_quantity < 1, unit_price ≈ total_price / quantity
-    kg_per_package = conn.execute(
-        """
+    kg_per_package = conn.execute("""
         SELECT id, name, quantity, unit_quantity, unit_price, total_price
         FROM fact_items
         WHERE unit = 'kg'
@@ -526,8 +519,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
           AND total_price IS NOT NULL AND total_price > 0
           AND quantity IS NOT NULL AND quantity > 0
           AND ABS(total_price - unit_price * quantity) / total_price < 0.05
-        """
-    ).fetchall()
+        """).fetchall()
 
     for row in kg_per_package:
         item_id = row["id"]

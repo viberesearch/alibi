@@ -1,6 +1,6 @@
 """Gemini-based OCR text structuring (Stage 3 replacement).
 
-Replaces qwen3:8b as the LLM stage in the 3-stage extraction pipeline.
+Replaces qwen3.5:9b as the LLM stage in the 3-stage extraction pipeline.
 Uses Google Gemini with Pydantic structured output for reliable JSON
 extraction from OCR text.
 
@@ -302,8 +302,7 @@ def structure_ocr_text_gemini(
 # Vision extraction (image bytes → structured data, bypasses OCR)
 # ---------------------------------------------------------------------------
 
-_VISION_SYSTEM_PROMPT = (
-    """\
+_VISION_SYSTEM_PROMPT = """\
 You are a document data extraction specialist. Given an image of a financial \
 document (receipt, invoice, payment confirmation, or bank statement), extract \
 ALL structured data accurately.
@@ -311,9 +310,7 @@ ALL structured data accurately.
 Read every piece of text in the image. Extract all line items, totals, dates, \
 vendor details, and payment information visible.
 
-"""
-    + _SYSTEM_PROMPT.split("RULES:\n", 1)[1]
-)  # Reuse extraction rules
+""" + _SYSTEM_PROMPT.split("RULES:\n", 1)[1]  # Reuse extraction rules
 
 
 def extract_from_image_gemini(

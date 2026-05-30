@@ -24,7 +24,6 @@ from alibi.clouds.learning import (
 from alibi.db.connection import DatabaseManager
 from alibi.db.models import BundleType
 
-
 # ---------------------------------------------------------------------------
 # Test helper
 # ---------------------------------------------------------------------------

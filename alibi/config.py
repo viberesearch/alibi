@@ -41,7 +41,7 @@ class Config(BaseSettings):
     ollama_model: str = Field(default="qwen3-vl:30b")
     ollama_ocr_model: str = Field(default="glm-ocr")
     ollama_ocr_fallback_model: Optional[str] = Field(default=None)
-    ollama_structure_model: str = Field(default="qwen3:8b")
+    ollama_structure_model: str = Field(default="qwen3.5:9b")
     ollama_keep_alive: int = Field(default=300)  # seconds; 0 = unload immediately
     ollama_num_predict: int = Field(
         default=4096
@@ -117,11 +117,11 @@ class Config(BaseSettings):
     # Gemini enrichment
     gemini_api_key: Optional[str] = Field(default=None)
     gemini_enrichment_enabled: bool = Field(default=False)
-    gemini_enrichment_model: str = Field(default="gemini-2.5-flash")
+    gemini_enrichment_model: str = Field(default="gemini-3.5-flash")
 
-    # Gemini extraction (Stage 3 replacement for Ollama qwen3:8b)
+    # Gemini extraction (Stage 3 replacement for Ollama qwen3.5:9b)
     gemini_extraction_enabled: bool = Field(default=False)
-    gemini_extraction_model: str = Field(default="gemini-2.5-flash")
+    gemini_extraction_model: str = Field(default="gemini-3.5-flash")
 
     # Open Food Facts contribution (submit enriched products back to OFF)
     off_contribution_enabled: bool = Field(default=False)
