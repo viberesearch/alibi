@@ -3,7 +3,7 @@
 Three-stage pipeline (default):
   Stage 1: glm-ocr (fast OCR) → raw text
   Stage 2: Heuristic text parser → pre-structured data
-  Stage 3: qwen3:8b (text-only) → correction/enrichment JSON
+  Stage 3: qwen3.5:9b (text-only) → correction/enrichment JSON
 
 Falls back to two-stage (skip parser) when heuristic confidence < 0.3,
 and to legacy single-stage vision (qwen3-vl:30b) when verification fails.

@@ -21,7 +21,6 @@ from alibi.extraction.item_verifier import (
     cross_validate_receipt,
 )
 
-
 # ---------------------------------------------------------------------------
 # TestIsHeaderOrGarbage
 # ---------------------------------------------------------------------------

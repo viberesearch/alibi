@@ -212,13 +212,11 @@ def get_retention_stats(db: "DatabaseManager") -> dict[str, Any]:
         Dictionary with data statistics
     """
     # Count documents by status
-    status_rows = db.fetchall(
-        """
+    status_rows = db.fetchall("""
         SELECT status, COUNT(*) as count
         FROM documents
         GROUP BY status
-        """
-    )
+        """)
     status_counts = {row[0]: row[1] for row in status_rows}
 
     # Get age distribution for documents

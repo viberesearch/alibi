@@ -23,7 +23,6 @@ from alibi.errors import (
     format_error,
 )
 
-
 # ---------------------------------------------------------------------------
 # Standalone commands
 # ---------------------------------------------------------------------------
@@ -2285,9 +2284,9 @@ def vectordb_init(space: str, rebuild: bool) -> None:
         except Exception as e:
             console.print(f"\n[red]Error building index:[/red] {e}")
             console.print(
-                "\nMake sure Ollama is running with the nomic-embed-text model:"
+                "\nMake sure Ollama is running with the nomic-embed-text-v2-moe model:"
             )
-            console.print("  ollama pull nomic-embed-text")
+            console.print("  ollama pull nomic-embed-text-v2-moe")
             console.print("  ollama serve")
             raise click.Abort() from e
 
@@ -2365,7 +2364,7 @@ def vectordb_search(query_text: str, limit: int, entity_type: str) -> None:
         )
     except Exception as e:
         console.print(f"[red]Search error:[/red] {e}")
-        console.print("\nMake sure Ollama is running with nomic-embed-text.")
+        console.print("\nMake sure Ollama is running with nomic-embed-text-v2-moe.")
         raise click.Abort() from e
 
     if not results:

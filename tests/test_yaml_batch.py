@@ -9,7 +9,6 @@ from click.testing import CliRunner
 from alibi.cli import cli
 from alibi.extraction.yaml_cache import YAML_SUFFIX, YAML_VERSION, get_yaml_path
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

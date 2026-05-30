@@ -111,7 +111,7 @@ Only invoked when the text parser's confidence is below threshold. Two modes:
 - **Correction prompt** (confidence >= 0.3): Sends only uncertain text regions with confidence hints. ~60% token reduction.
 - **Full prompt** (confidence < 0.3): Sends complete OCR text for full extraction.
 
-Local-first (qwen3:8b via Ollama), with cloud fallback (Gemini Flash) when the local model can't handle the document. Each cloud call is tracked -- the system learns vendor templates to avoid future escalation.
+Local-first (qwen3.5:9b via Ollama), with cloud fallback (Gemini Flash) when the local model can't handle the document. Each cloud call is tracked -- the system learns vendor templates to avoid future escalation.
 
 ### YAML Intermediary
 Processing is split into two phases:
@@ -406,7 +406,7 @@ Scenario-based budgeting with actual-vs-target variance tracking (`alibi/budgets
 
 Optional LanceDB-powered semantic search (`alibi/vectordb/`):
 
-- **Embeddings**: Ollama `nomic-embed-text` (768 dimensions)
+- **Embeddings**: Ollama `nomic-embed-text-v2-moe` (768 dimensions, 512-token context)
 - **Index types**: transactions, artifacts, items
 - **Search modes**: SQL LIKE, vector similarity, unified (combined with deduplication)
 - CLI: `lt vectordb init/status/search`, API: `GET /api/v1/search?semantic=true`

@@ -13,7 +13,6 @@ from alibi.config import Config, reset_config
 from alibi.db.connection import DatabaseManager
 from alibi.db import v2_store
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

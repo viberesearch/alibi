@@ -30,7 +30,6 @@ from alibi.db.models import (
     UnitType,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -55,8 +54,7 @@ def v1_conn(tmp_path: Path) -> Generator[sqlite3.Connection, None, None]:
     """Create a v1 database with all tables needed for migration testing."""
     db_path = tmp_path / "v1_test.db"
     conn = sqlite3.connect(str(db_path))
-    conn.executescript(
-        """
+    conn.executescript("""
         PRAGMA foreign_keys = ON;
         CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL,
                             created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
@@ -105,8 +103,7 @@ def v1_conn(tmp_path: Path) -> Generator[sqlite3.Connection, None, None]:
         CREATE TABLE schema_version (version INTEGER PRIMARY KEY,
                                      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP);
         INSERT INTO schema_version (version) VALUES (1);
-        """
-    )
+        """)
     yield conn
     conn.close()
 

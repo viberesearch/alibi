@@ -32,7 +32,6 @@ from alibi.db.models import (
 from alibi.identities.matching import _strip_country_prefix
 from alibi.normalizers.vendors import normalize_vendor_slug
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

@@ -21,7 +21,6 @@ from alibi.enrichment.service import (
     enrich_pending_by_name,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers — seed enriched items into DB
 # ---------------------------------------------------------------------------

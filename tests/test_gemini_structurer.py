@@ -25,7 +25,6 @@ from alibi.extraction.gemini_structurer import (
     structure_ocr_texts_gemini,
 )
 
-
 # ===========================================================================
 # Pydantic model tests
 # ===========================================================================

@@ -24,8 +24,7 @@ def _get_fact_provenance(
     site.
     """
     conn = db.get_connection()
-    rows = conn.execute(
-        """
+    rows = conn.execute("""
         SELECT DISTINCT f.id, d.source, d.user_id
         FROM facts f
         JOIN clouds c ON c.id = f.cloud_id
@@ -35,8 +34,7 @@ def _get_fact_provenance(
         JOIN atoms a ON a.id = ba.atom_id
         JOIN documents d ON d.id = a.document_id
         WHERE d.source IS NOT NULL
-        """
-    ).fetchall()
+        """).fetchall()
     result: dict[str, tuple[str | None, str | None]] = {}
     for row in rows:
         fact_id = row[0]

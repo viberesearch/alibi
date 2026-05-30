@@ -12,7 +12,6 @@ from alibi.config import get_config
 from alibi.db.connection import get_db
 from alibi.errors import NO_INBOX_CONFIGURED
 
-
 # ---------------------------------------------------------------------------
 # yaml group
 # ---------------------------------------------------------------------------

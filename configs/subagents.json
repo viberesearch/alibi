@@ -98,6 +98,6 @@
     "description": "For operational apps, use local Ollama models instead of subagents",
     "code_review": "qwen3.6:27b",
     "summarization": "qwen2.5:7b-instruct-q8_0",
-    "embeddings": "nomic-embed-text"
+    "embeddings": "nomic-embed-text-v2-moe"
   }
 }

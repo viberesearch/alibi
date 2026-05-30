@@ -24,7 +24,6 @@ from alibi.db.models import (
 )
 from alibi.maintenance.learning_aggregation import fix_weighed_item_units
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

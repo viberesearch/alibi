@@ -100,7 +100,7 @@ def infer_batch(
     Args:
         items: List of dicts with 'idx' (int), 'name' (str), optional 'barcode'.
         api_key: Gemini API key. Falls back to config.
-        model: Model ID. Defaults to gemini-2.5-flash.
+        model: Model ID. Defaults to gemini-3.5-flash.
 
     Returns:
         List of ItemEnrichment Pydantic models. Empty on failure.

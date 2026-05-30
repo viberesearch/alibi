@@ -18,7 +18,6 @@ import pytest
 from alibi.services.auth import create_api_key, create_user, find_user_by_telegram
 from alibi.telegram.handlers.upload import _resolve_telegram_user
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

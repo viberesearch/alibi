@@ -13,7 +13,6 @@ os.environ["ALIBI_TESTING"] = "1"
 
 from alibi.predictions.client import MindsDBClient, MindsDBError, QueryResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

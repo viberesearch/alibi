@@ -8,7 +8,6 @@ from typing import Any, Generator, Optional
 
 from alibi.config import Config, get_config
 
-
 # ---------------------------------------------------------------------------
 # Register explicit adapters/converters to replace the deprecated defaults
 # removed in Python 3.12.  This silences the DeprecationWarning triggered by

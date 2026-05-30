@@ -12,7 +12,6 @@ import pytest
 from alibi.db.models import DisplayType, Tier
 from alibi.masking import DisclosurePolicy, MaskingService, get_policy
 
-
 # ---------------------------------------------------------------------------
 # DisclosurePolicy tests
 # ---------------------------------------------------------------------------

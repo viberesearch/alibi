@@ -1,4 +1,4 @@
-"""Embedding generation using Ollama nomic-embed-text."""
+"""Embedding generation using Ollama nomic-embed-text-v2-moe."""
 
 import logging
 from typing import Any, Callable, cast
@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 # Retry configuration for Ollama API calls
 OLLAMA_RETRY_EXCEPTIONS = (httpx.TimeoutException, httpx.ConnectError)
 
-# nomic-embed-text dimensions
+# nomic-embed-text-v2-moe dimensions (Matryoshka default: 768)
 EMBEDDING_DIM = 768
-EMBEDDING_MODEL = "nomic-embed-text"
+EMBEDDING_MODEL = "nomic-embed-text-v2-moe"
 
 
 class EmbeddingError(Exception):
@@ -35,7 +35,7 @@ def get_embedding(
     Args:
         text: Text to embed
         ollama_url: Ollama API URL (defaults to config)
-        model: Embedding model (default: nomic-embed-text)
+        model: Embedding model (default: nomic-embed-text-v2-moe)
         timeout: Request timeout in seconds
 
     Returns:
@@ -47,9 +47,9 @@ def get_embedding(
     config = get_config()
     ollama_url = ollama_url or config.ollama_url
 
-    # Truncate text to avoid token limits (nomic-embed-text: 8192 tokens).
-    # JSON/structured text tokenizes at ~2.5 chars/token, so cap at 6000 chars
-    # to stay safely within the context window for all content types.
+    # Cap payload size as a safety bound. nomic-embed-text-v2-moe has a 512-token
+    # context; the /api/embed call below sets truncate=true so Ollama truncates
+    # server-side to the context window rather than erroring on overflow.
     truncated_text = text[:6000]
 
     result = _call_ollama_embedding(ollama_url, model, truncated_text, timeout)
@@ -57,10 +57,11 @@ def get_embedding(
     if "error" in result:
         raise EmbeddingError(f"Ollama error: {result['error']}")
 
-    if "embedding" not in result:
+    embeddings = result.get("embeddings")
+    if not embeddings:
         raise EmbeddingError(f"No embedding in response: {result}")
 
-    embedding: list[float] = result["embedding"]
+    embedding: list[float] = embeddings[0]
 
     if len(embedding) != EMBEDDING_DIM:
         logger.warning(
@@ -81,10 +82,11 @@ def _call_ollama_embedding(
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(
-                f"{ollama_url}/api/embeddings",
+                f"{ollama_url}/api/embed",
                 json={
                     "model": model,
-                    "prompt": text,
+                    "input": text,
+                    "truncate": True,
                 },
             )
             response.raise_for_status()
@@ -108,7 +110,7 @@ async def get_embedding_async(
     Args:
         text: Text to embed
         ollama_url: Ollama API URL (defaults to config)
-        model: Embedding model (default: nomic-embed-text)
+        model: Embedding model (default: nomic-embed-text-v2-moe)
         timeout: Request timeout in seconds
 
     Returns:
@@ -129,10 +131,11 @@ async def get_embedding_async(
     if "error" in result:
         raise EmbeddingError(f"Ollama error: {result['error']}")
 
-    if "embedding" not in result:
+    embeddings = result.get("embeddings")
+    if not embeddings:
         raise EmbeddingError(f"No embedding in response: {result}")
 
-    embedding: list[float] = result["embedding"]
+    embedding: list[float] = embeddings[0]
 
     return embedding
 
@@ -148,10 +151,11 @@ async def _call_ollama_embedding_async(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                f"{ollama_url}/api/embeddings",
+                f"{ollama_url}/api/embed",
                 json={
                     "model": model,
-                    "prompt": text,
+                    "input": text,
+                    "truncate": True,
                 },
             )
             response.raise_for_status()
