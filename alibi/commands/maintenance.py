@@ -14,7 +14,6 @@ from alibi.commands.shared import console, is_quiet
 from alibi.config import get_config
 from alibi.db.connection import DatabaseManager, get_db
 
-
 # ---------------------------------------------------------------------------
 # db group
 # ---------------------------------------------------------------------------

@@ -10,7 +10,6 @@ import pytest
 from alibi.services import correction as svc
 from alibi.utils.map_url import haversine_distance
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

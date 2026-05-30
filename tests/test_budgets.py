@@ -23,7 +23,6 @@ from alibi.config import Config
 from alibi.db.connection import DatabaseManager
 from alibi.db.models import DataType
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

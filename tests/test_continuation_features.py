@@ -26,7 +26,6 @@ from alibi.processing.pipeline import (
     _LLM_OVERRIDABLE_TYPES,
 )
 
-
 # ============================================================
 # Task 1: STR_TO_ARTIFACT_TYPE consolidation
 # ============================================================

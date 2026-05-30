@@ -9,7 +9,6 @@ from alibi.processing.pipeline import ProcessingResult
 from alibi.processing.folder_router import FolderContext
 from alibi.services import ingestion
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

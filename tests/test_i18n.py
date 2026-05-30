@@ -16,7 +16,6 @@ from alibi.config import Config, reset_config
 from alibi.db.connection import DatabaseManager
 from alibi.i18n import format_line_item_name, get_display_name, get_supported_languages
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for get_display_name
 # ---------------------------------------------------------------------------

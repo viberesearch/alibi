@@ -51,7 +51,6 @@ from alibi.services.export_analytics import (
 )
 from alibi.services.subscribers.analytics import AnalyticsExportSubscriber
 
-
 # ---------------------------------------------------------------------------
 # Shared HTTP capture server fixture
 # ---------------------------------------------------------------------------

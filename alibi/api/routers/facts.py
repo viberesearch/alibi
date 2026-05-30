@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from alibi.api.deps import PaginationParams, get_database, paginate, require_user
 from alibi.db.connection import DatabaseManager
 
-
 router = APIRouter()
 
 

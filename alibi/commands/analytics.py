@@ -11,7 +11,6 @@ from alibi.commands.shared import console, format_amount
 from alibi.config import get_config
 from alibi.db.connection import get_db
 
-
 # ---------------------------------------------------------------------------
 # analytics group
 # ---------------------------------------------------------------------------
