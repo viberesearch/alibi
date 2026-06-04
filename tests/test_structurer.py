@@ -65,10 +65,22 @@ class TestStructureOcrText:
             ollama_url="http://test:11434",
             emphasis_prompt="Custom emphasis prompt with text\n{...}",
         )
-        # Should use the emphasis prompt instead of default
+        # Should use the emphasis prompt verbatim (reasoning is now disabled
+        # via the think=false request field, not an in-prompt /no_think prefix).
         call_args = mock_call.call_args
-        assert call_args[0][2] == "/no_think\nCustom emphasis prompt with text\n{...}"
+        assert call_args[0][2] == "Custom emphasis prompt with text\n{...}"
+        # Correction/emphasis retries are not schema-constrained.
+        assert call_args.kwargs.get("response_format") is None
         assert result["vendor"] == "Test"
+
+    @patch("alibi.extraction.structurer._call_ollama_text")
+    def test_schema_enforced_for_default_path(self, mock_call):
+        """Non-emphasis extraction constrains output to the JSON schema."""
+        mock_call.return_value = {"response": json.dumps({"vendor": "Test"})}
+        structure_ocr_text("text", model="qwen3:30b", ollama_url="http://test:11434")
+        fmt = mock_call.call_args.kwargs.get("response_format")
+        assert isinstance(fmt, dict)
+        assert "line_items" in fmt.get("properties", {})
 
     @patch("alibi.extraction.structurer._call_ollama_text")
     def test_no_images_in_request(self, mock_call):
