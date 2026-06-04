@@ -35,7 +35,7 @@ def _call_ollama_text(
 
     Uses /api/chat for thinking models (Gemma4 etc.) because /api/generate
     silently consumes thinking tokens from the num_predict budget and can
-    return empty responses. See internal-standards LOCAL_MODELS.md.
+    return empty responses. Set a generous num_predict (>= 2048) for these.
     """
     config = get_config()
     is_thinking_model = any(t in model for t in _THINKING_MODELS)

@@ -78,6 +78,16 @@ data/lancedb/
 # Machine-specific MCP config (use .mcp.json.silicon or .mcp.json.intel templates)
 .mcp.json
 
+# internal-internal AI tooling (NOT for the public repo)
+# Symlinks to the private internal-standards repo + internal dev skills/traces.
+# Regenerated locally by internal-standards/distribute_rules.sh.
+.clinerules
+.cursorrules
+.cursorignore
+.rooignore
+.claude-decisions/
+/skills/
+
 # Private development files
 .claude/
 implementation-logs/
