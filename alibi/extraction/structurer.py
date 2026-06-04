@@ -21,7 +21,30 @@ logger = logging.getLogger(__name__)
 _RETRY_EXCEPTIONS = (httpx.TimeoutException, httpx.ConnectError)
 
 
-_THINKING_MODELS = ("gemma4", "gemma3", "exaone", "sarvam")
+# Models routed through /api/chat because /api/generate mishandles their
+# reasoning stream (consumes the num_predict budget, returns empty response).
+_CHAT_ENDPOINT_MODELS = ("gemma4", "gemma3", "exaone", "sarvam")
+
+# Models with a hybrid reasoning mode that must be disabled at the API level
+# (think=false) for structured extraction. On Ollama >= 0.30 the in-prompt
+# "/no_think" directive is ignored: qwen3.5 burns the ENTIRE num_predict
+# budget on reasoning tokens and returns an empty response. The think=false
+# request field is the only reliable switch.
+_THINKING_CAPABLE_MODELS = ("qwen3", "gemma4", "gemma3", "exaone", "sarvam")
+
+
+def get_extraction_json_schema(doc_type: str) -> dict[str, Any]:
+    """Return the JSON schema for a document type's extraction output.
+
+    Reuses the Pydantic extraction models that already back the Gemini
+    structured-output path, so the local Ollama model is constrained to the
+    exact same contract. The schema is the universal normalization target:
+    whatever the document's country or tax vocabulary (MwSt, TVA, IVA, sales
+    tax, GST), the model must collapse it into these canonical fields.
+    """
+    from alibi.extraction.gemini_structurer import _get_extraction_model
+
+    return _get_extraction_model(doc_type).model_json_schema()
 
 
 @with_retry(max_attempts=3, base_delay=2.0, exceptions=_RETRY_EXCEPTIONS)
@@ -30,32 +53,43 @@ def _call_ollama_text(
     model: str,
     prompt: str,
     timeout: float,
+    response_format: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Call Ollama with text-only prompt.
 
-    Uses /api/chat for thinking models (Gemma4 etc.) because /api/generate
-    silently consumes thinking tokens from the num_predict budget and can
-    return empty responses. Set a generous num_predict (>= 2048) for these.
+    Uses /api/chat for models whose reasoning stream /api/generate mishandles
+    (Gemma4 etc.). For hybrid reasoning models the request sets ``think=false``
+    so the model spends its token budget on the answer, not on reasoning —
+    structured extraction needs no chain-of-thought, and on Ollama >= 0.30 the
+    in-prompt "/no_think" directive is ignored.
+
+    When ``response_format`` (a JSON schema) is supplied it is passed as
+    Ollama's ``format`` field, which constrains decoding to schema-conforming
+    output — the enforcement layer that turns the prose "return JSON" prompt
+    into a contract.
     """
     config = get_config()
-    is_thinking_model = any(t in model for t in _THINKING_MODELS)
+    use_chat_endpoint = any(t in model for t in _CHAT_ENDPOINT_MODELS)
+    can_think = any(t in model for t in _THINKING_CAPABLE_MODELS)
+    options = {
+        "temperature": 0.1,
+        "num_predict": config.ollama_num_predict,
+    }
     try:
         with httpx.Client(timeout=timeout) as client:
-            if is_thinking_model:
-                # Chat endpoint returns thinking + content correctly
-                response = client.post(
-                    f"{ollama_url}/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "keep_alive": config.ollama_keep_alive,
-                        "options": {
-                            "temperature": 0.1,
-                            "num_predict": config.ollama_num_predict,
-                        },
-                    },
-                )
+            if use_chat_endpoint:
+                body: dict[str, Any] = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "keep_alive": config.ollama_keep_alive,
+                    "options": options,
+                }
+                if can_think:
+                    body["think"] = False
+                if response_format is not None:
+                    body["format"] = response_format
+                response = client.post(f"{ollama_url}/api/chat", json=body)
                 response.raise_for_status()
                 data = response.json()
                 # Normalize chat response to generate-style format
@@ -64,19 +98,18 @@ def _call_ollama_text(
                     **{k: v for k, v in data.items() if k != "message"},
                 }
             else:
-                response = client.post(
-                    f"{ollama_url}/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "keep_alive": config.ollama_keep_alive,
-                        "options": {
-                            "temperature": 0.1,
-                            "num_predict": config.ollama_num_predict,
-                        },
-                    },
-                )
+                body = {
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "keep_alive": config.ollama_keep_alive,
+                    "options": options,
+                }
+                if can_think:
+                    body["think"] = False
+                if response_format is not None:
+                    body["format"] = response_format
+                response = client.post(f"{ollama_url}/api/generate", json=body)
                 response.raise_for_status()
             return cast(dict[str, Any], response.json())
     except httpx.HTTPStatusError as e:
@@ -151,13 +184,27 @@ def structure_ocr_text(
             raw_text, doc_type, version=2, mode=prompt_mode
         )
 
-    # qwen3 models use a thinking mode by default that generates thousands
-    # of reasoning tokens before the actual output. For structured extraction
-    # this wastes time and causes timeouts. Prefix with /no_think to disable.
-    if "qwen3" in model:
-        prompt = "/no_think\n" + prompt
+    # qwen3 and other hybrid models default to a reasoning mode that spends
+    # thousands of tokens before emitting output. For structured extraction
+    # this wastes the budget and causes timeouts/empty responses. It is
+    # disabled via the think=false request field in _call_ollama_text (the
+    # in-prompt "/no_think" directive is silently ignored on Ollama >= 0.30).
 
-    result = _call_ollama_text(ollama_url, model, prompt, timeout)
+    # Constrain decoding to the extraction schema when enabled. This is the
+    # WHAT-prompt enforcement layer: the local model can only emit
+    # schema-conforming JSON, matching the Gemini response_schema path.
+    # Skipped for emphasis/correction retries, whose free-form correction
+    # prompts ask for shapes the strict schema would reject.
+    response_format: dict[str, Any] | None = None
+    if config.ollama_structured_output and not emphasis_prompt:
+        try:
+            response_format = get_extraction_json_schema(doc_type)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Could not build extraction schema for %s: %s", doc_type, e)
+
+    result = _call_ollama_text(
+        ollama_url, model, prompt, timeout, response_format=response_format
+    )
 
     if "error" in result:
         raise VisionExtractionError(f"Structure error: {result['error']}")
