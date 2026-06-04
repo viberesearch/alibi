@@ -66,6 +66,14 @@ class Config(BaseSettings):
     # 'universal' uses UNIVERSAL_PROMPT_V2 for all document types.
     prompt_mode: str = Field(default="specialized")
 
+    # Constrain the local Ollama structuring model to the extraction JSON
+    # schema (Ollama `format` param). Turns the prose "return JSON" prompt
+    # into an enforced contract — the model can only emit schema-conforming
+    # output. Mirrors the Gemini path's Pydantic response_schema. The schema
+    # fields are the canonical normalization target, so country-specific
+    # receipts (MwSt, TVA, sales tax, GST) all collapse into the same fields.
+    ollama_structured_output: bool = Field(default=True)
+
     # Default currency
     default_currency: str = Field(default="EUR")
 
