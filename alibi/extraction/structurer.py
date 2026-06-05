@@ -74,6 +74,7 @@ def _call_ollama_text(
     options = {
         "temperature": 0.1,
         "num_predict": config.ollama_num_predict,
+        "num_ctx": config.ollama_num_ctx,
     }
     try:
         with httpx.Client(timeout=timeout) as client:
