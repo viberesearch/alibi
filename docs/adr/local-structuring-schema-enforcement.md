@@ -89,7 +89,7 @@ which were silently broken by the same reasoning-budget bug.
 
 ## Notes
 
-- Requires Ollama ≥ 0.30 (the `think` request field). The fleet pins ≥ 0.19.x;
+- Requires Ollama ≥ 0.30 (the `think` request field). Ollama is pinned ≥ 0.19.x;
   this raises the effective floor for the local structuring path.
 - Cloud (Gemini) path unchanged — it already enforced the contract.
 - The general lesson generalizes to any local structured-output task on
