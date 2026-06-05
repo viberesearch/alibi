@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -287,7 +288,8 @@ def _default_llm_fn(system_prompt: str, user_prompt: str) -> str:
         "keep_alive": config.ollama_keep_alive,
     }
     url = config.ollama_url.rstrip("/") + "/api/chat"
-    with httpx.Client(timeout=120.0) as client:
+    timeout = float(os.environ.get("ALIBI_STRUCTURE_TIMEOUT", "600"))
+    with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, json=payload)
         resp.raise_for_status()
         content: str = resp.json()["message"]["content"]
