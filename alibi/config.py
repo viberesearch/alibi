@@ -41,7 +41,11 @@ class Config(BaseSettings):
     ollama_model: str = Field(default="qwen3-vl:30b")
     ollama_ocr_model: str = Field(default="glm-ocr")
     ollama_ocr_fallback_model: Optional[str] = Field(default=None)
-    ollama_structure_model: str = Field(default="qwen3.5:9b")
+    # Structuring model (Stage 3, OCR text -> schema JSON). gemma4:12b beat
+    # qwen3.5:9b on a 11-receipt accuracy benchmark: verify 0.87 vs 0.76
+    # (never lost per-image), fill 0.85 vs 0.77. Slower but accuracy-first.
+    # Routes via /api/chat with think=false + format schema (see structurer).
+    ollama_structure_model: str = Field(default="gemma4:12b")
     ollama_keep_alive: int = Field(default=300)  # seconds; 0 = unload immediately
     ollama_num_predict: int = Field(
         default=4096
