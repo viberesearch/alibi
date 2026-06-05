@@ -282,7 +282,13 @@ def main() -> None:
 
     rows: list[dict[str, Any]] = []
     for img in imgs:
-        ocr = ocr_cached(img, cache_dir, args.ocr_model)
+        try:
+            ocr = ocr_cached(img, cache_dir, args.ocr_model)
+        except Exception as e:
+            # OCR-stage failures (timeouts under VRAM pressure, etc.) must not
+            # abort the whole benchmark — skip the image, keep the partials.
+            print(f"\n{img.name}\n  ! OCR failed, skipping: {type(e).__name__}: {e}")
+            continue
         row: dict[str, Any] = {"img": img.name}
         for m in models:
             row[f"text:{m}"] = run_text(m, ocr, args.doc_type, url, schema)
@@ -305,6 +311,9 @@ def main() -> None:
                 )
 
     # Aggregate + verdict
+    if not rows:
+        print("\nNo images scored (all OCR failed?). Nothing to aggregate.")
+        return
     keys = [k for k in rows[0].keys() if k != "img"]
     summary = {k: aggregate(rows, k) for k in keys}
     print("\n=== AGGREGATE ===")
