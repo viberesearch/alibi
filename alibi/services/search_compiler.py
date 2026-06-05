@@ -1,6 +1,6 @@
 """Search-as-Code: compile NL -> validated search plan -> deterministic query.
 
-Implements the fleet "Search / Query as a Generated, Grounded Artifact" pattern
+Implements the "Search / Query as a Generated, Grounded Artifact" pattern
 for alibi's fact search. Instead of treating a natural-language query as opaque
 text (LIKE / embedding), the LLM compiles it into a typed, validated, reproducible
 *search plan* grounded in the live SQLite facets (real vendors, fact_types,
@@ -15,7 +15,7 @@ PIPELINE:
       -> plan_to_search_params(plan)         # deterministic -> list_facts filters
       -> query.list_facts(...) / search_facts(...)
 
-The four disciplines (see fleet SEARCH_AS_CODE_PATTERN.md): ground the LLM in a
+The four disciplines: ground the LLM in a
 live registry; flag unknowns, never silently map; the plan is a typed, validated
 artifact; plan -> execution is deterministic (the plan is the reproducibility key,
 re-run with ZERO LLM calls).
@@ -301,8 +301,8 @@ def compile_nl_to_plan(
 ) -> dict[str, Any]:
     """Compile a natural-language query into a validated search plan.
 
-    Exactly one LLM call. ``llm_fn`` defaults to a local Ollama generate (fleet
-    prefer_local: $0). Tests inject a stub (no live LLM in CI).
+    Exactly one LLM call. ``llm_fn`` defaults to a local Ollama generate
+    (local-first, $0). Tests inject a stub (no live LLM in CI).
     """
     system = _build_system_prompt(context)
     fn = llm_fn or _default_llm_fn
