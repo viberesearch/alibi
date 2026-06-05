@@ -56,6 +56,13 @@ class Config(BaseSettings):
     # machine's Ollama GUI default (e.g. 256k) — a large default reserves a
     # huge KV cache per loaded model and causes needless VRAM pressure.
     ollama_num_ctx: int = Field(default=8192)
+    # Per-document escalation: a large receipt (many line items) can exhaust
+    # the output budget and return truncated, unparseable JSON. When Ollama
+    # signals this (done_reason="length") the structuring call is retried once
+    # with these larger budgets. num_ctx must also grow since prompt + output
+    # must fit the context window.
+    ollama_num_predict_escalated: int = Field(default=8192)
+    ollama_num_ctx_escalated: int = Field(default=16384)
     ocr_backend: str = Field(default="ollama")  # "ollama" or "doctr"
     # Skip LLM (Stage 3) when parser confidence is at or above this threshold.
     # Set to 1.1 to never skip. Default 0.9 skips LLM for well-parsed receipts.

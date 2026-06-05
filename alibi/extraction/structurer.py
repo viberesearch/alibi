@@ -54,6 +54,8 @@ def _call_ollama_text(
     prompt: str,
     timeout: float,
     response_format: dict[str, Any] | None = None,
+    num_predict: int | None = None,
+    num_ctx: int | None = None,
 ) -> dict[str, Any]:
     """Call Ollama with text-only prompt.
 
@@ -73,8 +75,8 @@ def _call_ollama_text(
     can_think = any(t in model for t in _THINKING_CAPABLE_MODELS)
     options = {
         "temperature": 0.1,
-        "num_predict": config.ollama_num_predict,
-        "num_ctx": config.ollama_num_ctx,
+        "num_predict": num_predict or config.ollama_num_predict,
+        "num_ctx": num_ctx or config.ollama_num_ctx,
     }
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -206,6 +208,32 @@ def structure_ocr_text(
     result = _call_ollama_text(
         ollama_url, model, prompt, timeout, response_format=response_format
     )
+
+    # Per-document escalation: a large receipt can exhaust the output budget
+    # and return truncated, unparseable JSON. Ollama reports done_reason=="length"
+    # when generation was cut off at num_predict. Retry once with larger
+    # num_predict AND num_ctx (prompt + output must fit the context) and more
+    # time. Applies to the emphasis/correction path too.
+    if (
+        result.get("done_reason") == "length"
+        and config.ollama_num_predict_escalated > config.ollama_num_predict
+    ):
+        logger.warning(
+            "Structuring output truncated (done_reason=length, eval=%s); "
+            "retrying with num_predict=%d num_ctx=%d",
+            result.get("eval_count"),
+            config.ollama_num_predict_escalated,
+            config.ollama_num_ctx_escalated,
+        )
+        result = _call_ollama_text(
+            ollama_url,
+            model,
+            prompt,
+            max(timeout, 300.0),
+            response_format=response_format,
+            num_predict=config.ollama_num_predict_escalated,
+            num_ctx=config.ollama_num_ctx_escalated,
+        )
 
     if "error" in result:
         raise VisionExtractionError(f"Structure error: {result['error']}")

@@ -93,6 +93,35 @@ class TestStructureOcrText:
         assert len(call_args[0]) == 4
 
     @patch("alibi.extraction.structurer._call_ollama_text")
+    def test_escalates_budget_on_truncation(self, mock_call):
+        """A truncated (done_reason=length) response triggers one larger retry."""
+        from alibi.config import get_config
+
+        cfg = get_config()
+        mock_call.side_effect = [
+            {"response": "", "done_reason": "length", "eval_count": 4096},
+            {"response": json.dumps({"vendor": "Big"}), "done_reason": "stop"},
+        ]
+        result = structure_ocr_text(
+            "text", model="gemma4:12b", ollama_url="http://test:11434"
+        )
+        assert mock_call.call_count == 2
+        retry = mock_call.call_args_list[1]
+        assert retry.kwargs.get("num_predict") == cfg.ollama_num_predict_escalated
+        assert retry.kwargs.get("num_ctx") == cfg.ollama_num_ctx_escalated
+        assert result["vendor"] == "Big"
+
+    @patch("alibi.extraction.structurer._call_ollama_text")
+    def test_no_escalation_when_not_truncated(self, mock_call):
+        """A normal (done_reason=stop) response is used directly, no retry."""
+        mock_call.return_value = {
+            "response": json.dumps({"vendor": "Small"}),
+            "done_reason": "stop",
+        }
+        structure_ocr_text("text", model="gemma4:12b", ollama_url="http://test:11434")
+        assert mock_call.call_count == 1
+
+    @patch("alibi.extraction.structurer._call_ollama_text")
     def test_json_in_code_block(self, mock_call):
         mock_call.return_value = {
             "response": '```json\n{"vendor": "Test", "total": 5.00}\n```'
