@@ -250,6 +250,7 @@ def _call_ollama_ocr(
     timeout: float,
 ) -> dict[str, Any]:
     """Call Ollama API with a single image for OCR."""
+    config = get_config()
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(
@@ -259,7 +260,10 @@ def _call_ollama_ocr(
                     "prompt": prompt,
                     "images": [image_b64],
                     "stream": False,
-                    "options": {"temperature": 0.0},
+                    "options": {
+                        "temperature": 0.0,
+                        "num_ctx": config.ollama_num_ctx,
+                    },
                 },
             )
             response.raise_for_status()

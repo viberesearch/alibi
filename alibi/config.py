@@ -50,6 +50,12 @@ class Config(BaseSettings):
     ollama_num_predict: int = Field(
         default=4096
     )  # tokens; must be high for thinking models
+    # Context window for OCR + structuring calls. alibi documents are tiny
+    # (largest receipt OCR ~2.6k tokens; +prompt/schema ~5k worst case), so a
+    # small ctx is plenty. Setting it explicitly decouples alibi from each
+    # machine's Ollama GUI default (e.g. 256k) — a large default reserves a
+    # huge KV cache per loaded model and causes needless VRAM pressure.
+    ollama_num_ctx: int = Field(default=8192)
     ocr_backend: str = Field(default="ollama")  # "ollama" or "doctr"
     # Skip LLM (Stage 3) when parser confidence is at or above this threshold.
     # Set to 1.1 to never skip. Default 0.9 skips LLM for well-parsed receipts.
