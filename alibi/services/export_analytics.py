@@ -1,4 +1,4 @@
-"""Analytics stack export — pushes facts to the internal analytics platform."""
+"""Analytics stack export — pushes facts to the analytics platform."""
 
 from __future__ import annotations
 
