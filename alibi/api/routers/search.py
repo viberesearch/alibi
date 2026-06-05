@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from alibi.api.deps import get_database, require_user
 from alibi.db.connection import DatabaseManager
@@ -15,14 +16,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class CompileSearchRequest(BaseModel):
+    """Compile an NL query into a grounded, validated search plan."""
+
+    query: str
+    limit: int = 50
+
+
 @router.get("")
 async def search(
     q: str = Query(..., min_length=1, description="Search query"),
     db: Annotated[DatabaseManager, Depends(get_database)] = None,  # type: ignore[assignment]
     user: Annotated[dict[str, Any], Depends(require_user)] = None,  # type: ignore[assignment]
-    type: Optional[str] = Query(
-        None, description="Filter by type: document, fact, item"
-    ),
+    type: str | None = Query(None, description="Filter by type: document, fact, item"),
     limit: int = Query(20, ge=1, le=100),
     semantic: bool = Query(
         False, description="Use vector similarity search (requires LanceDB)"
@@ -118,4 +124,39 @@ async def search(
         "query": q,
         "total": len(results),
         "results": results[:limit],
+    }
+
+
+@router.post("/compile")
+async def compile_search(
+    req: CompileSearchRequest,
+    db: Annotated[DatabaseManager, Depends(get_database)] = None,  # type: ignore[assignment]
+    user: Annotated[dict[str, Any], Depends(require_user)] = None,  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """Search-as-Code: compile NL into a grounded, validated search plan and run it.
+
+    One local-LLM call compiles the query into a typed plan grounded in the live
+    SQLite facets (no invented vendors/types/categories; unknowns surface in
+    ``flags``). The plan -> query translation is deterministic, so the returned plan
+    re-runs with zero LLM calls. The plain ``GET /api/v1/search`` is unchanged.
+    """
+    from alibi.services import search_compiler
+
+    try:
+        context = search_compiler.build_search_context(db)
+        plan = search_compiler.compile_nl_to_plan(req.query, context)
+        plan["limit"] = req.limit
+        result = search_compiler.execute_plan(plan, db, context=None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # pragma: no cover - upstream/LLM failures
+        logger.exception("compile_search failed")
+        raise HTTPException(status_code=502, detail=f"compile failed: {exc}")
+
+    return {
+        "query": req.query,
+        "plan": result["plan"],
+        "flags": result["flags"],
+        "total": result["total"],
+        "results": result["facts"],
     }
