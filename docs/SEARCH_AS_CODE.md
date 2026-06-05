@@ -1,6 +1,6 @@
 # Search-as-Code: grounded NL -> validated search plan
 
-Implements the internal "Search / Query as a Generated, Grounded Artifact" pattern for
+Implements the "Search / Query as a Generated, Grounded Artifact" pattern for
 alibi's fact search. Instead of treating a natural-language query as opaque text
 (SQL `LIKE` or an embedding), the LLM compiles it into a typed, validated,
 reproducible **search plan** grounded in the live SQLite facets, which then executes
