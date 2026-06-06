@@ -1,4 +1,4 @@
-name: CI
+name: internal CI
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       # Python tooling - only if pyproject.toml exists
       - name: Install uv
