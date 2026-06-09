@@ -53,6 +53,19 @@ class TestSetFactLocation:
         assert result["lng"] == pytest.approx(32.4218)
         assert result["place_name"] == "Test Shop"
 
+    def test_stores_place_name_only_location(self, db):
+        # Modern Google share links carry an address but no coordinates — the
+        # location is still recorded, with lat/lng = None.
+        _insert_fact(db)
+        url = (
+            "https://www.google.com/maps?q=Little+Sins,+Georgiou+'A+34,+Limassol+4047"
+            "&ftid=0x14e0cdaf6e45abf5:0xa1e953a4dcdef036"
+        )
+        result = svc.set_fact_location(db, "fact-1", url)
+        assert result is not None
+        assert result["lat"] is None and result["lng"] is None
+        assert result["place_name"] == "Little Sins, Georgiou 'A 34, Limassol 4047"
+
     def test_returns_none_for_invalid_url(self, db):
         _insert_fact(db)
         result = svc.set_fact_location(db, "fact-1", "https://example.com")

@@ -240,6 +240,21 @@ def get_document(db: DatabaseManager, document_id: str) -> dict[str, Any] | None
     return dict(row) if row else None
 
 
+def get_primary_fact_id_for_document(
+    db: DatabaseManager, document_id: str
+) -> str | None:
+    """Resolve the fact a document contributed to (document → … → fact).
+
+    A document's bundle joins a cloud that collapses to a fact; when the upload
+    is recognised as the same transaction as an earlier document, both share one
+    fact. Returns that fact's id (the first if several), or None if the document
+    has not collapsed into a fact yet. Used to attach a location to the right
+    fact after a Telegram/API upload.
+    """
+    facts = v2_store.get_facts_for_document(db, document_id)
+    return facts[0]["id"] if facts else None
+
+
 def list_documents(
     db: DatabaseManager,
     filters: dict[str, Any] | None = None,

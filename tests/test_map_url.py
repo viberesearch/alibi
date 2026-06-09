@@ -111,6 +111,26 @@ class TestParseMapUrl:
         url = "https://www.google.com/maps/search/restaurants"
         assert parse_map_url(url) is None
 
+    def test_place_name_only_from_q_address(self):
+        # Modern share links resolve to ?q=<address> with NO lat,lng — record the
+        # place name even without coordinates.
+        url = (
+            "https://www.google.com/maps?q=Little+Sins,+Georgiou+'A+34,+Limassol+4047"
+            "&ftid=0x14e0cdaf6e45abf5:0xa1e953a4dcdef036"
+        )
+        result = parse_map_url(url)
+        assert result is not None
+        assert result["lat"] is None and result["lng"] is None
+        assert result["place_name"] == "Little Sins, Georgiou 'A 34, Limassol 4047"
+        assert result["clean_url"]  # a usable link is still returned
+
+    def test_q_coords_not_treated_as_place_name(self):
+        # A bare "lat,lng" q= must parse as coordinates, not a place name.
+        result = parse_map_url("https://www.google.com/maps?q=34.77,32.42")
+        assert result is not None
+        assert result["lat"] == pytest.approx(34.77)
+        assert result["place_name"] is None
+
     def test_auto_adds_https(self):
         url = "maps.google.com/maps?q=34.77,32.42"
         result = parse_map_url(url)

@@ -86,15 +86,25 @@ def parse_map_url(url: str) -> dict[str, Any] | None:
         return _resolve_short_link(url)
 
     lat, lng = _extract_coords(parsed)
-    if lat is None or lng is None:
-        return None
 
-    # Validate coordinate ranges
-    if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
-        return None
+    # Out-of-range coordinates are unusable — discard them and fall back to the
+    # place name (if any) rather than rejecting the whole URL.
+    if (
+        lat is not None
+        and lng is not None
+        and (not (-90 <= lat <= 90) or not (-180 <= lng <= 180))
+    ):
+        lat, lng = None, None
 
-    place_name = _extract_place_name(parsed.path)
+    place_name = _extract_place_name(parsed.path) or _place_name_from_query(parsed)
     clean_url = _clean_url(parsed)
+
+    # Accept the URL when it yields EITHER coordinates or a named place. Modern
+    # Google share links (maps.app.goo.gl) resolve to a `?q=<address>&ftid=...`
+    # form that carries the place name/address but no lat,lng — still a usable
+    # location to record, just without exact coordinates.
+    if (lat is None or lng is None) and not place_name:
+        return None
 
     return {
         "lat": lat,
@@ -188,6 +198,27 @@ def _extract_coords(parsed: ParseResult) -> tuple[float | None, float | None]:
             return float(m.group(1)), float(m.group(2))
 
     return None, None
+
+
+def _place_name_from_query(parsed: ParseResult) -> str | None:
+    """Extract a textual place name/address from the q= / query= parameter.
+
+    Modern Google Maps share links resolve to `?q=<address>` (e.g.
+    `q=Little Sins, Georgiou 'A 34, Limassol 4047`) with no coordinates. When the
+    value is a plain address rather than a `lat,lng` pair, it is the place name.
+    ``parse_qs`` already URL-decodes the value (``+`` → space, percent-decoding).
+    """
+    params = parse_qs(parsed.query)
+    for key in ("q", "query"):
+        values = params.get(key)
+        if not values:
+            continue
+        candidate = values[0].strip()
+        # A bare "lat,lng" q= is coordinates, handled by _extract_coords.
+        if not candidate or _Q_COORDS_RE.match(candidate):
+            continue
+        return candidate
+    return None
 
 
 def _extract_place_name(path: str) -> str | None:

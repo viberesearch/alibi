@@ -881,3 +881,19 @@ class TestCategoryPathFilter:
         self._star_with_path(db, "Milk", "food > dairy > milk")
         rows = query.list_fact_items_with_fact(db, filters={"name": "Milk"})
         assert rows[0]["category_path"] == "food > dairy > milk"
+
+
+class TestGetPrimaryFactIdForDocument:
+    def test_resolves_fact_from_document(self, db):
+        doc = _make_doc(db)
+        atom = _make_vendor_atom(db, doc)
+        bundle = _make_bundle(db, doc, [atom])
+        fact = _make_cloud_and_collapse(db, bundle)
+        assert query.get_primary_fact_id_for_document(db, doc.id) == fact.id
+
+    def test_none_for_document_without_fact(self, db):
+        doc = _make_doc(db)
+        assert query.get_primary_fact_id_for_document(db, doc.id) is None
+
+    def test_none_for_unknown_document(self, db):
+        assert query.get_primary_fact_id_for_document(db, "no-such-doc") is None

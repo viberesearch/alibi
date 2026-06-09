@@ -99,7 +99,10 @@ def _load_location_facts(db: Any) -> list[dict[str, Any]]:
                 metadata = json.loads(metadata)
             except (json.JSONDecodeError, TypeError):
                 continue
-        if not metadata or "lat" not in metadata or "lng" not in metadata:
+        # Skip locations without usable coordinates (place-name-only annotations
+        # from modern Google share links carry lat/lng = None) — distance-based
+        # analytics can't use them, and float(None) would crash below.
+        if not metadata or metadata.get("lat") is None or metadata.get("lng") is None:
             continue
 
         results.append(

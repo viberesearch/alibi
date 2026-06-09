@@ -63,6 +63,19 @@ class TestSpendingByLocation:
         assert results[0].total_amount == pytest.approx(40.0)
         assert results[0].visit_count == 2
 
+    def test_skips_coordless_locations(self, mock_db: MagicMock) -> None:
+        # Place-name-only annotations (lat/lng = None, from modern share links)
+        # must be skipped, not crash float(None) in _load_location_facts.
+        mock_db.fetchall.return_value = _make_location_rows(
+            [
+                {"fact_id": "f1", "lat": 35.0, "lng": 33.0, "total_amount": 15.0},
+                {"fact_id": "f2", "lat": None, "lng": None, "total_amount": 25.0},
+            ]
+        )
+        results = spending_by_location(mock_db)
+        assert len(results) == 1  # only the located one
+        assert results[0].total_amount == pytest.approx(15.0)
+
     def test_clustering(self, mock_db: MagicMock) -> None:
         """Locations within cluster radius are merged."""
         mock_db.fetchall.return_value = _make_location_rows(

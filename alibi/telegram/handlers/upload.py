@@ -3,7 +3,7 @@
 Supports /receipt, /invoice, /payment, /statement, /warranty, /contract,
 and /upload commands. Each command optionally carries a vendor hint and
 can be followed by a photo or document attachment, or sent first to
-prime a 60-second upload window.
+prime an upload window.
 
 When multiple photos are sent as a media group (album), they are
 automatically buffered and processed as pages of a single document
@@ -56,8 +56,10 @@ _pending_uploads: dict[int, tuple[DocumentType | None, str | None, float]] = {}
 # Per-chat pending location state: chat_id -> (fact_id, timestamp)
 _pending_location: dict[int, tuple[str, float]] = {}
 
-# Seconds before a pending upload state expires
-_PENDING_TTL = 60.0
+# Seconds before a pending upload state expires. Generous so a user has time to
+# open Maps, find the place and paste the share link after an upload — 60s was
+# far too short for that.
+_PENDING_TTL = 600.0
 
 # Seconds to wait for additional photos in a media group
 _MEDIA_GROUP_TIMEOUT = 2.0
@@ -139,8 +141,26 @@ def _parse_type_and_hint(
     return doc_type, vendor_hint
 
 
-def _format_result(result) -> str:  # type: ignore[no-untyped-def]
-    """Format a ProcessingResult into a human-readable reply."""
+async def _resolve_fact_id(db: DatabaseManager, result) -> str | None:  # type: ignore[no-untyped-def]
+    """Resolve the collapsed fact id for a processed document (or None)."""
+    if not getattr(result, "success", False) or not getattr(
+        result, "document_id", None
+    ):
+        return None
+    from alibi.services import get_primary_fact_id_for_document
+
+    return await asyncio.to_thread(
+        get_primary_fact_id_for_document, db, result.document_id
+    )
+
+
+def _format_result(result, fact_id: str | None = None) -> str:  # type: ignore[no-untyped-def]
+    """Format a ProcessingResult into a human-readable reply.
+
+    ``fact_id`` is the real collapsed fact id (resolved by the caller); the
+    /fix and /map commands need it. Falls back to the document id only when the
+    fact hasn't been resolved.
+    """
     if not result.success:
         return "Processing failed. Try a clearer photo or different angle."
 
@@ -160,7 +180,7 @@ def _format_result(result) -> str:  # type: ignore[no-untyped-def]
         result.record_type.value if result.record_type else "N/A"
     )
     item_count = len(result.line_items) if result.line_items else 0
-    fact_id = result.document_id or "N/A"
+    fact_id = fact_id or result.document_id or "N/A"
 
     lines = [
         "Document processed successfully!",
@@ -278,12 +298,14 @@ async def _process_attachment(
         )
         return
 
-    reply = _format_result(result)
+    fact_id = await _resolve_fact_id(db, result)
+    reply = _format_result(result, fact_id)
     await message.reply(reply, parse_mode="Markdown")
 
-    # Set pending location state so user can send a map URL
-    if result.success and result.document_id:
-        _pending_location[message.chat.id] = (result.document_id, time.time())
+    # Set pending location state so user can send a map URL — keyed on the real
+    # fact id (set_fact_location needs a fact, not a document).
+    if fact_id:
+        _pending_location[message.chat.id] = (fact_id, time.time())
 
 
 async def _process_media_group(buf: _MediaGroupBuffer) -> None:
@@ -362,12 +384,13 @@ async def _process_media_group(buf: _MediaGroupBuffer) -> None:
             )
             return
 
-    reply = _format_result(result)
+    fact_id = await _resolve_fact_id(db, result)
+    reply = _format_result(result, fact_id)
     await buf.first_message.reply(reply, parse_mode="Markdown")
 
-    # Set pending location state
-    if result.success and result.document_id:
-        _pending_location[buf.chat_id] = (result.document_id, time.time())
+    # Set pending location state keyed on the real fact id.
+    if fact_id:
+        _pending_location[buf.chat_id] = (fact_id, time.time())
 
 
 async def _media_group_timer(media_group_id: str) -> None:
