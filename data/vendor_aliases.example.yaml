@@ -1,0 +1,28 @@
+# Vendor alias mappings -- maps raw vendor names to canonical display names.
+# Keys can be in any form (will be normalized for matching).
+# Values are the canonical display name to store.
+#
+# Copy to data/vendor_aliases.yaml and customize for your vendors.
+#
+# Usage: when the pipeline extracts a vendor name, it normalizes it and checks
+# against these aliases using fuzzy substring matching. On match, the canonical
+# name (value) is stored instead.
+
+# Cyprus grocery stores
+"ALPHAMEGA HYPERMARKET": Alphamega
+"ALPHAMEGA": Alphamega
+"PAPAS SUPERMARKET": Papas
+"PAPAS": Papas
+
+# Cyprus fuel stations
+"EKO FUEL": EKO
+"EKO STATION": EKO
+"PETROLINA": Petrolina
+
+# Banks
+"BANK OF CYPRUS": Bank of Cyprus
+"BOC": Bank of Cyprus
+
+# Example patterns:
+# "RAW NAME FROM OCR": Canonical Display Name
+# "ABBREVIATED NAME": Canonical Display Name

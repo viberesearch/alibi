@@ -29,11 +29,13 @@ from alibi.api.routers import (
     facts_router,
     health_router,
     identities_router,
+    item_stars_router,
     items_router,
     line_items_router,
     nutrition_router,
     predictions_router,
     process_router,
+    reconciliation_router,
     reports_router,
     search_router,
     users_router,
@@ -87,7 +89,15 @@ def create_app() -> FastAPI:
         line_items_router, prefix="/api/v1/line-items", tags=["line-items"]
     )
     app.include_router(items_router, prefix="/api/v1/items", tags=["items"])
+    app.include_router(
+        item_stars_router, prefix="/api/v1/item-stars", tags=["item-stars"]
+    )
     app.include_router(reports_router, prefix="/api/v1/reports", tags=["reports"])
+    app.include_router(
+        reconciliation_router,
+        prefix="/api/v1/reconciliation",
+        tags=["reconciliation"],
+    )
     app.include_router(search_router, prefix="/api/v1/search", tags=["search"])
     app.include_router(export_router, prefix="/api/v1/export", tags=["export"])
     app.include_router(facts_router, prefix="/api/v1/facts", tags=["facts"])

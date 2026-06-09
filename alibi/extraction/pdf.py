@@ -341,6 +341,7 @@ def _extract_pdf_with_parser(
                     doc_type=doc_type,
                     timeout=timeout,
                     emphasis_prompt=correction_prompt,
+                    enforce_schema=True,
                 )
                 extracted["_parser_confidence"] = parse_result.confidence
                 extracted["_pipeline"] = "pdf_three_stage"
@@ -644,6 +645,7 @@ def extract_pdf_via_vision(
                             doc_type=doc_type,
                             timeout=llm_timeout,
                             emphasis_prompt=correction_prompt,
+                            enforce_schema=True,
                         )
                         extracted["_parser_confidence"] = parse_result.confidence
                         extracted["_pipeline"] = "pdf_vision_three_stage"

@@ -891,6 +891,8 @@ tr.fact-row-expanded { background: var(--card-hover); }
     <button class="nav-btn" onclick="navigate('facts')">Facts</button>
     <button class="nav-btn" onclick="navigate('upload')">Upload</button>
     <button class="nav-btn" onclick="navigate('analytics')">Analytics</button>
+    <button class="nav-btn" onclick="navigate('item-sky')">Item Sky</button>
+    <button class="nav-btn" onclick="navigate('reconciliation')">Reconcile</button>
     <button class="nav-btn" onclick="navigate('search')">Search</button>
     <button class="nav-btn" onclick="navigate('enrichment')">Enrichment</button>
   </nav>
@@ -937,6 +939,18 @@ tr.fact-row-expanded { background: var(--card-hover); }
   <div id="view-analytics" class="view">
     <div class="page-heading"><h1 class="page-title">Analytics</h1></div>
     <div id="analytics-content"></div>
+  </div>
+
+  <!-- Item Sky View -->
+  <div id="view-item-sky" class="view">
+    <div class="page-heading"><h1 class="page-title">Item Sky</h1></div>
+    <div id="item-sky-content"></div>
+  </div>
+
+  <!-- Reconciliation View -->
+  <div id="view-reconciliation" class="view">
+    <div class="page-heading"><h1 class="page-title">Reconcile</h1></div>
+    <div id="reconciliation-content"></div>
   </div>
 
   <!-- Search View -->
@@ -1053,6 +1067,12 @@ function handleRoute() {
   } else if (hash === 'analytics') {
     document.getElementById('view-analytics').classList.add('active');
     renderAnalytics();
+  } else if (hash === 'item-sky') {
+    document.getElementById('view-item-sky').classList.add('active');
+    renderItemSky();
+  } else if (hash === 'reconciliation') {
+    document.getElementById('view-reconciliation').classList.add('active');
+    renderReconciliation();
   } else if (hash === 'search') {
     document.getElementById('view-search').classList.add('active');
     renderSearch();
@@ -1196,7 +1216,8 @@ function escHtml(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function relativeTime(dateStr) {
@@ -2438,6 +2459,121 @@ async function toggleFactDetail(factId) {
 }
 
 // ============================================================
+// Reconciliation
+// ============================================================
+var reconcileCoverage = '';   // '', 'matched', 'items_only', 'payment_only', 'empty'
+var reconcileVendor = '';
+
+var RECONCILE_LABELS = {
+  matched: 'Matched',
+  items_only: 'Items only',
+  payment_only: 'Payment only',
+  empty: 'Empty'
+};
+
+function reconcileCoverageBadge(cov) {
+  var colors = {
+    matched: 'background:rgba(34,197,94,0.15);color:var(--success)',
+    items_only: 'background:rgba(245,158,11,0.15);color:var(--warning)',
+    payment_only: 'background:rgba(99,102,241,0.15);color:var(--accent)',
+    empty: 'background:rgba(100,116,139,0.15);color:var(--muted)'
+  };
+  return '<span class="badge" style="' + (colors[cov] || '') + '">'
+    + escHtml(RECONCILE_LABELS[cov] || cov) + '</span>';
+}
+
+function setReconcileCoverage(cov) {
+  reconcileCoverage = (reconcileCoverage === cov) ? '' : cov;
+  renderReconciliation();
+}
+
+function applyReconcileVendor(v) {
+  reconcileVendor = (v || '').trim();
+  renderReconciliation();
+}
+
+async function renderReconciliation() {
+  setLoading('reconciliation-content');
+
+  var qs = [];
+  if (reconcileCoverage) qs.push('coverage=' + encodeURIComponent(reconcileCoverage));
+  if (reconcileVendor) qs.push('vendor=' + encodeURIComponent(reconcileVendor));
+  var path = '/api/v1/reconciliation' + (qs.length ? '?' + qs.join('&') : '');
+
+  var data;
+  try {
+    data = await apiGet(path);
+  } catch(e) {
+    setHtml('reconciliation-content', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+    return;
+  }
+  if (!data) return;
+  setHtml('reconciliation-content', buildReconciliationView(data));
+}
+
+function buildReconciliationView(data) {
+  var s = data.summary || {};
+  var txns = data.transactions || [];
+
+  // Summary tiles — clicking matched/items_only/payment_only/empty filters.
+  var tiles = ['matched', 'items_only', 'payment_only', 'empty'].map(function(cov) {
+    var active = reconcileCoverage === cov ? ' style="outline:2px solid var(--accent);cursor:pointer" ' : ' style="cursor:pointer" ';
+    return '<div class="stat-card"' + active + 'onclick="setReconcileCoverage(\'' + cov + '\')">'
+      + '<div class="stat-label">' + escHtml(RECONCILE_LABELS[cov]) + '</div>'
+      + '<div class="stat-value">' + (s[cov] || 0) + '</div></div>';
+  }).join('');
+  var statsHtml = '<div class="stats-grid">' + tiles + '</div>';
+
+  // Worklist quick-filters + vendor filter.
+  var worklist = '<div class="facts-filter" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<button class="btn btn-sm ' + (reconcileCoverage === 'payment_only' ? 'btn-primary' : 'btn-secondary') + '" onclick="setReconcileCoverage(\'payment_only\')">Card charges without a receipt</button>'
+    + '<button class="btn btn-sm ' + (reconcileCoverage === 'items_only' ? 'btn-primary' : 'btn-secondary') + '" onclick="setReconcileCoverage(\'items_only\')">Receipts without a payment</button>'
+    + (reconcileCoverage ? '<button class="btn btn-ghost btn-sm" onclick="setReconcileCoverage(\'' + reconcileCoverage + '\')">Clear filter</button>' : '')
+    + '<input class="form-input" type="text" placeholder="Filter by vendor..." value="' + escHtml(reconcileVendor) + '" onchange="applyReconcileVendor(this.value)" style="max-width:240px;margin-left:auto">'
+    + '</div>';
+
+  if (txns.length === 0) {
+    return statsHtml + worklist
+      + '<div class="card"><div class="card-body"><div class="empty-state">'
+      + '<div class="empty-state-title">No transactions</div>'
+      + '<p>No transactions match the current filter.</p>'
+      + '</div></div></div>';
+  }
+
+  var rows = txns.map(function(t) {
+    var num = function(v) { return v != null ? Number(v).toFixed(2) : '—'; };
+    var flags = '';
+    if (t.amount_mismatch) flags += '<span class="badge" style="background:rgba(245,158,11,0.15);color:var(--warning)" title="Receipt total != sum of line items">items ≠ total</span> ';
+    if (t.payment_mismatch) flags += '<span class="badge" style="background:rgba(239,68,68,0.15);color:var(--danger)" title="Receipt total != payment amount">paid ≠ total</span>';
+    if (!flags) flags = '<span style="color:var(--muted)">—</span>';
+    return '<tr data-vendor="' + escHtml((t.vendor || '').toLowerCase()) + '">'
+      + '<td>' + escHtml(t.event_date || '—') + (t.event_time ? ' <span style="color:var(--muted)">' + escHtml(t.event_time) + '</span>' : '') + '</td>'
+      + '<td>' + escHtml(t.vendor || '—') + '</td>'
+      + '<td>' + reconcileCoverageBadge(t.coverage) + '</td>'
+      + '<td style="text-align:right">' + num(t.total_amount) + '</td>'
+      + '<td style="text-align:right">' + num(t.items_sum) + '</td>'
+      + '<td style="text-align:right">' + num(t.payment_amount) + '</td>'
+      + '<td>' + escHtml(t.currency || '—') + '</td>'
+      + '<td>' + flags + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var tableHtml = '<div class="card">'
+    + '<div class="card-header"><span class="card-title">Transactions</span>'
+    + '<span class="badge badge-muted">' + (s.total || txns.length) + ' shown</span></div>'
+    + '<div class="table-wrap"><table id="reconcile-table"><thead><tr>'
+    + '<th>Date</th><th>Vendor</th><th>Coverage</th>'
+    + '<th style="text-align:right">Total</th>'
+    + '<th style="text-align:right">Items Σ</th>'
+    + '<th style="text-align:right">Payment</th>'
+    + '<th>Currency</th><th>Flags</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+
+  return statsHtml + worklist + tableHtml;
+}
+
+// ============================================================
 // Upload
 // ============================================================
 var uploadSelectedFile = null;
@@ -2799,6 +2935,323 @@ function buildSubscriptionsCard(subscriptions) {
 // ============================================================
 // Search
 // ============================================================
+// ============================================================
+// Item Sky — item-as-star analytics over /api/v1/item-stars
+// ============================================================
+var itemSkyState = { filters: {}, groupBy: 'comparable_name', attrs: {} };
+
+// Filter axes exposed in the UI (reuse the A-axis filter set).
+var ITEM_SKY_AXES = [
+  { key: 'comparable_name', label: 'Product', placeholder: 'e.g. milk' },
+  { key: 'category_path', label: 'Category', placeholder: 'e.g. food > dairy' },
+  { key: 'vendor', label: 'Vendor', placeholder: 'e.g. LIDL' },
+  { key: 'country', label: 'Country', placeholder: 'CY' },
+  { key: 'currency', label: 'Currency', placeholder: 'EUR' },
+  { key: 'date_from', label: 'From', placeholder: 'YYYY-MM-DD' },
+  { key: 'date_to', label: 'To', placeholder: 'YYYY-MM-DD' }
+];
+
+function renderItemSky() {
+  var inputs = ITEM_SKY_AXES.map(function(a) {
+    var val = itemSkyState.filters[a.key] || '';
+    return '<div style="display:flex;flex-direction:column;gap:4px">'
+      + '<label style="font-size:11px;color:var(--muted)">' + escHtml(a.label) + '</label>'
+      + '<input id="isky-' + a.key + '" class="form-input" style="min-width:120px" '
+      + 'placeholder="' + escHtml(a.placeholder) + '" value="' + escHtml(val) + '">'
+      + '</div>';
+  }).join('');
+
+  var html = '<div class="card" style="margin-bottom:16px">'
+    + '<div class="card-header"><span class="card-title">Filters</span></div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:4px 0">'
+    + inputs
+    + '<button class="btn btn-primary" onclick="applyItemSkyFilters()">Apply</button>'
+    + '<button class="btn btn-secondary" onclick="clearItemSkyFilters()">Clear</button>'
+    + '</div>'
+    + '<div id="isky-chips" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px"></div>'
+    + '</div>'
+    + '<div id="isky-results">'
+    + '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Loading item sky...</span></div>'
+    + '</div>';
+
+  setHtml('item-sky-content', html);
+  renderItemSkyChips();
+  loadItemSky();
+}
+
+function renderItemSkyChips() {
+  var keys = Object.keys(itemSkyState.filters);
+  var labelOf = {};
+  ITEM_SKY_AXES.forEach(function(a) { labelOf[a.key] = a.label; });
+  if (!keys.length) {
+    setHtml('isky-chips', '<span style="color:var(--muted);font-size:12px">No filters — showing all items.</span>');
+    return;
+  }
+  var chips = keys.map(function(k) {
+    return '<span class="badge badge-muted" style="cursor:pointer" '
+      + 'onclick="removeItemSkyFilter(\'' + k + '\')" title="Click to remove">'
+      + escHtml(labelOf[k] || k) + ': ' + escHtml(String(itemSkyState.filters[k])) + ' &times;</span>';
+  }).join('');
+  setHtml('isky-chips', chips);
+}
+
+function applyItemSkyFilters() {
+  var f = {};
+  ITEM_SKY_AXES.forEach(function(a) {
+    var el = document.getElementById('isky-' + a.key);
+    var v = el ? el.value.trim() : '';
+    if (v) f[a.key] = v;
+  });
+  itemSkyState.filters = f;
+  renderItemSkyChips();
+  loadItemSky();
+}
+
+function clearItemSkyFilters() {
+  itemSkyState.filters = {};
+  itemSkyState.attrs = {};
+  renderItemSky();
+}
+
+function removeItemSkyFilter(key) {
+  delete itemSkyState.filters[key];
+  renderItemSky();
+}
+
+function itemSkyAttrString() {
+  // Build the API `attr` param, e.g. "organic:true,size:l".
+  return Object.keys(itemSkyState.attrs).map(function(k) {
+    var v = itemSkyState.attrs[k];
+    return v === null ? k : (k + ':' + v);
+  }).join(',');
+}
+
+function itemSkyQuery(extra) {
+  var params = new URLSearchParams();
+  Object.keys(itemSkyState.filters).forEach(function(k) {
+    params.set(k, itemSkyState.filters[k]);
+  });
+  var attr = itemSkyAttrString();
+  if (attr) params.set('attr', attr);
+  if (extra) Object.keys(extra).forEach(function(k) { params.set(k, extra[k]); });
+  var s = params.toString();
+  return s ? ('?' + s) : '';
+}
+
+function toggleFacet(key, value) {
+  // value comes in as a string; coerce 1/0 (json bool) to true/false for the API.
+  // An empty string means "facet present" (stored as null).
+  var v = value;
+  if (v === '' || v == null) v = null;
+  else if (v === '1') v = 'true';
+  else if (v === '0') v = 'false';
+  if (itemSkyState.attrs[key] === v) {
+    delete itemSkyState.attrs[key];
+  } else {
+    itemSkyState.attrs[key] = v;
+  }
+  loadItemSky();
+}
+
+// Facet chips carry their key/value in escaped data-* attributes and are bound
+// via delegation in bindFacetChips() — NEVER inline onclick string-concat,
+// since facet keys/values originate from OCR/LLM text (untrusted) and would be
+// an XSS vector in an inline handler.
+function _facetChip(k, value, label, active) {
+  var style = 'cursor:pointer' + (active ? ';background:var(--accent);color:#fff' : '');
+  return '<span class="badge isky-facet ' + (active ? '' : 'badge-muted') + '" '
+    + 'style="' + style + '" '
+    + 'data-fk="' + escHtml(k) + '" data-fv="' + escHtml(String(value)) + '">'
+    + label + '</span>';
+}
+
+function buildFacetsPanel(facets) {
+  var keys = Object.keys(facets || {});
+  var head = '<div class="card"><div class="card-header"><span class="card-title">Facets</span>';
+  // Active facet filters (click to remove).
+  var active = Object.keys(itemSkyState.attrs).map(function(k) {
+    var v = itemSkyState.attrs[k];
+    var label = escHtml(k) + (v === null ? '' : '=' + escHtml(String(v))) + ' &times;';
+    return _facetChip(k, v === null ? '' : v, label, true);
+  }).join(' ');
+  head += active ? ('<span>' + active + '</span>') : '';
+  head += '</div>';
+  if (!keys.length) {
+    return head + '<div class="empty-state"><p>No attribute facets in view. Run '
+      + '<code>lt enrich attributes</code> then <code>lt items rebuild</code>.</p></div></div>';
+  }
+  var body = keys.map(function(k) {
+    var chips = facets[k].slice(0, 12).map(function(fv) {
+      var disp = fv.value === 1 ? 'yes' : (fv.value === 0 ? 'no' : escHtml(String(fv.value)));
+      var activeChip = String(itemSkyState.attrs[k]) ===
+        (fv.value === 1 ? 'true' : (fv.value === 0 ? 'false' : String(fv.value)));
+      var label = disp + ' <span style="opacity:.6">' + fv.item_count + '</span>';
+      return _facetChip(k, fv.value, label, activeChip);
+    }).join(' ');
+    return '<div style="margin:6px 0"><span style="color:var(--muted);font-size:11px;'
+      + 'text-transform:uppercase;margin-right:8px">' + escHtml(k) + '</span>' + chips + '</div>';
+  }).join('');
+  return head + '<div style="padding:4px">' + body + '</div></div>';
+}
+
+function bindFacetChips() {
+  var root = document.getElementById('isky-results');
+  if (!root) return;
+  root.querySelectorAll('.isky-facet').forEach(function(el) {
+    el.addEventListener('click', function() {
+      toggleFacet(el.dataset.fk, el.dataset.fv);
+    });
+  });
+}
+
+async function loadItemSky() {
+  try {
+    var results = await Promise.all([
+      apiGet('/api/v1/item-stars' + itemSkyQuery({ limit: 3000 })),
+      apiGet('/api/v1/item-stars/avg-price' + itemSkyQuery({ group_by: itemSkyState.groupBy })),
+      apiGet('/api/v1/item-stars/basket' + itemSkyQuery({ by: 'category' })),
+      apiGet('/api/v1/item-stars/facets' + itemSkyQuery())
+    ]);
+    if (!results[0]) return;
+    var stars = results[0] || [];
+    var avg = results[1] || [];
+    var basket = results[2] || [];
+    var facets = results[3] || {};
+
+    var html = buildFacetsPanel(facets)
+      + '<div style="margin-top:16px">' + buildSkyScatter(stars) + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'
+      + buildAvgPanel(avg)
+      + buildBasketPanel(basket)
+      + '</div>';
+    setHtml('isky-results', html);
+    bindFacetChips();
+  } catch(e) {
+    setHtml('isky-results', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
+    showToast(e.message, 'error');
+  }
+}
+
+// Distinct colors per comparable_unit so the scatter's y-axis is interpretable.
+var ISKY_UNIT_COLORS = {
+  'L': '#6366f1', 'kg': '#22c55e', 'pcs': '#f59e0b',
+  'm': '#06b6d4', 'm2': '#a855f7', 'other': '#94a3b8'
+};
+function iskyColor(unit) { return ISKY_UNIT_COLORS[unit] || '#94a3b8'; }
+
+function buildSkyScatter(stars) {
+  // Each star: x = event_date, y = comparable_unit_price (log). Only priced,
+  // dated items are plottable.
+  var pts = stars.filter(function(s) {
+    return s.comparable_unit_price != null && s.event_date;
+  }).map(function(s) {
+    return {
+      t: Date.parse(s.event_date + 'T00:00:00'),
+      p: Math.abs(Number(s.comparable_unit_price)) || 0,
+      unit: s.comparable_unit || 'other',
+      name: s.comparable_name || s.name || '',
+      vendor: s.vendor || '',
+      date: s.event_date
+    };
+  }).filter(function(s) { return s.t && s.p > 0; });
+
+  var header = '<div class="card"><div class="card-header">'
+    + '<span class="card-title">Sky — ' + stars.length + ' items, ' + pts.length + ' plottable</span>'
+    + '<span class="badge badge-muted">x: date · y: comparable price (log)</span></div>';
+
+  if (!pts.length) {
+    return header + '<div class="empty-state"><p>No items with a comparable unit price and date match these filters. '
+      + 'Run <code>lt enrich categorize</code> / the comparable backfill, then <code>lt items rebuild</code>.</p></div></div>';
+  }
+
+  var W = 1000, H = 360, padL = 56, padR = 16, padT = 16, padB = 36;
+  var tMin = Math.min.apply(null, pts.map(function(p) { return p.t; }));
+  var tMax = Math.max.apply(null, pts.map(function(p) { return p.t; }));
+  var pMin = Math.min.apply(null, pts.map(function(p) { return p.p; }));
+  var pMax = Math.max.apply(null, pts.map(function(p) { return p.p; }));
+  var lpMin = Math.log10(pMin), lpMax = Math.log10(pMax);
+  if (lpMax - lpMin < 0.0001) { lpMax = lpMin + 1; }
+  if (tMax - tMin < 1) { tMax = tMin + 1; }
+
+  function sx(t) { return padL + (t - tMin) / (tMax - tMin) * (W - padL - padR); }
+  function sy(p) { return padT + (1 - (Math.log10(p) - lpMin) / (lpMax - lpMin)) * (H - padT - padB); }
+
+  // Y gridlines at decade-ish marks.
+  var grid = '';
+  for (var g = Math.floor(lpMin); g <= Math.ceil(lpMax); g++) {
+    var yv = Math.pow(10, g);
+    var yy = sy(yv);
+    grid += '<line x1="' + padL + '" y1="' + yy.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + yy.toFixed(1)
+      + '" stroke="var(--border)" stroke-width="1"/>'
+      + '<text x="' + (padL - 6) + '" y="' + (yy + 3).toFixed(1) + '" fill="var(--muted)" font-size="10" text-anchor="end">'
+      + yv + '</text>';
+  }
+
+  var circles = pts.map(function(p) {
+    var title = p.name + (p.vendor ? ' @ ' + p.vendor : '') + ' — ' + p.p.toFixed(3) + ' / ' + p.unit + ' (' + p.date + ')';
+    return '<circle cx="' + sx(p.t).toFixed(1) + '" cy="' + sy(p.p).toFixed(1) + '" r="4" '
+      + 'fill="' + iskyColor(p.unit) + '" fill-opacity="0.72" stroke="var(--bg)" stroke-width="0.5">'
+      + '<title>' + escHtml(title) + '</title></circle>';
+  }).join('');
+
+  // X axis date labels (min / mid / max).
+  function dlabel(t) { return new Date(t).toISOString().slice(0, 10); }
+  var xlabels = '<text x="' + padL + '" y="' + (H - 8) + '" fill="var(--muted)" font-size="10">' + dlabel(tMin) + '</text>'
+    + '<text x="' + (W / 2) + '" y="' + (H - 8) + '" fill="var(--muted)" font-size="10" text-anchor="middle">' + dlabel((tMin + tMax) / 2) + '</text>'
+    + '<text x="' + (W - padR) + '" y="' + (H - 8) + '" fill="var(--muted)" font-size="10" text-anchor="end">' + dlabel(tMax) + '</text>';
+
+  var legend = Object.keys(ISKY_UNIT_COLORS).map(function(u) {
+    return '<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)">'
+      + '<span style="width:10px;height:10px;border-radius:50%;background:' + ISKY_UNIT_COLORS[u] + ';display:inline-block"></span>'
+      + escHtml(u) + '</span>';
+  }).join('');
+
+  return header
+    + '<div style="overflow-x:auto"><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:auto;background:var(--bg);border-radius:var(--radius-sm)">'
+    + grid + circles + xlabels + '</svg></div>'
+    + '<div style="padding:8px 4px 2px">' + legend + '</div></div>';
+}
+
+function buildAvgPanel(rows) {
+  var dims = ['comparable_name', 'product_variant', 'vendor', 'country', 'category', 'month', 'quarter', 'year'];
+  var opts = dims.map(function(d) {
+    return '<option value="' + d + '"' + (d === itemSkyState.groupBy ? ' selected' : '') + '>' + d + '</option>';
+  }).join('');
+  var head = '<div class="card"><div class="card-header">'
+    + '<span class="card-title">Avg comparable price</span>'
+    + '<select id="isky-groupby" class="form-input" style="width:auto;padding:2px 8px" onchange="itemSkyState.groupBy=this.value;loadItemSky()">'
+    + opts + '</select></div>';
+  if (!rows.length) {
+    return head + '<div class="empty-state"><p>No priced items.</p></div></div>';
+  }
+  var body = rows.slice(0, 40).map(function(r) {
+    return '<tr><td>' + escHtml(String(r[itemSkyState.groupBy] != null ? r[itemSkyState.groupBy] : '—')) + '</td>'
+      + '<td style="text-align:right">' + Number(r.avg_comparable_unit_price).toFixed(3) + '</td>'
+      + '<td>' + escHtml(r.comparable_unit || '—') + '</td>'
+      + '<td style="text-align:right">' + r.item_count + '</td>'
+      + '<td style="text-align:right">' + r.vendor_count + '</td></tr>';
+  }).join('');
+  return head + '<div class="table-wrap"><table><thead><tr>'
+    + '<th>' + escHtml(itemSkyState.groupBy) + '</th><th style="text-align:right">Avg</th><th>Unit</th>'
+    + '<th style="text-align:right">Items</th><th style="text-align:right">Vendors</th>'
+    + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+
+function buildBasketPanel(rows) {
+  var head = '<div class="card"><div class="card-header"><span class="card-title">Basket composition</span></div>';
+  if (!rows.length) {
+    return head + '<div class="empty-state"><p>No items.</p></div></div>';
+  }
+  var body = rows.slice(0, 40).map(function(r) {
+    return '<tr><td>' + escHtml(String(r.category != null ? r.category : '—')) + '</td>'
+      + '<td style="text-align:right">' + r.item_count + '</td>'
+      + '<td style="text-align:right">' + (r.total_spent != null ? Number(r.total_spent).toFixed(2) : '—') + '</td></tr>';
+  }).join('');
+  return head + '<div class="table-wrap"><table><thead><tr>'
+    + '<th>Category</th><th style="text-align:right">Items</th><th style="text-align:right">Spent</th>'
+    + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+
 function renderSearch() {
   var html = '<div class="search-row">'
     + '<input id="search-input" class="form-input" type="text" placeholder="Search transactions, items, documents...">'

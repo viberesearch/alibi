@@ -486,14 +486,28 @@ def list_fact_items_with_fact(
     """List fact items joined with parent fact fields.
 
     Returns all fields needed for CSV export: item fields plus
-    vendor, event_date, currency from the parent fact.
+    vendor, vendor_key, event_date, event_time, currency, country from the
+    parent fact — so each item is self-describing along every filter axis.
+
+    Treat each fact_item as a "star" that can be filtered along any axis.
 
     Args:
         db: Database manager instance.
-        filters: Optional dict. Recognised keys:
+        filters: Optional dict. Recognised keys (all optional, AND-combined):
+            - name (str): substring match on fi.name
             - category (str): exact match on fi.category
-            - date_from (str | date): f.event_date >= (inclusive)
-            - date_to (str | date): f.event_date <= (inclusive)
+            - brand (str): substring match on fi.brand
+            - vendor (str): substring match on f.vendor
+            - vendor_key (str): exact match on f.vendor_key
+            - currency (str): exact match on f.currency (ISO 4217)
+            - country (str): exact match on f.country (jurisdiction)
+            - date_from / date_to (str | date): f.event_date bound (inclusive)
+            - datetime_from / datetime_to (str): date+time bound, e.g.
+              "2026-12-01 12:00:00" — uses event_date+event_time for finer
+              granularity than the date-only bounds
+            - price_min / price_max (number): bound on fi.total_price
+            - category_path (str): hierarchical prefix match — "food" matches
+              everything at or under "food" (e.g. "food > dairy > milk")
 
     Returns:
         List of dicts with item + parent fact fields.
@@ -502,13 +516,26 @@ def list_fact_items_with_fact(
     conditions: list[str] = ["1=1"]
     params: list[Any] = []
 
-    if filters.get("category"):
-        conditions.append("fi.category = ?")
-        params.append(filters["category"])
+    # Substring (LIKE) filters
+    for key, column in (
+        ("name", "fi.name"),
+        ("brand", "fi.brand"),
+        ("vendor", "f.vendor"),
+    ):
+        if filters.get(key):
+            conditions.append(f"LOWER({column}) LIKE ?")
+            params.append(f"%{str(filters[key]).lower()}%")
 
-    if filters.get("name"):
-        conditions.append("fi.name LIKE ?")
-        params.append(f"%{filters['name']}%")
+    # Exact-match filters
+    for key, column in (
+        ("category", "fi.category"),
+        ("vendor_key", "f.vendor_key"),
+        ("currency", "f.currency"),
+        ("country", "f.country"),
+    ):
+        if filters.get(key):
+            conditions.append(f"{column} = ?")
+            params.append(filters[key])
 
     date_from = filters.get("date_from")
     if date_from is not None:
@@ -524,15 +551,47 @@ def list_fact_items_with_fact(
         conditions.append("f.event_date <= ?")
         params.append(str(date_to))
 
+    # Date+time bounds (finer granularity). event_date and event_time are
+    # separate columns; concatenate them into a comparable timestamp string.
+    if filters.get("datetime_from") is not None:
+        conditions.append(
+            "(f.event_date || ' ' || COALESCE(f.event_time, '00:00:00')) >= ?"
+        )
+        params.append(str(filters["datetime_from"]))
+    if filters.get("datetime_to") is not None:
+        conditions.append(
+            "(f.event_date || ' ' || COALESCE(f.event_time, '23:59:59')) <= ?"
+        )
+        params.append(str(filters["datetime_to"]))
+
+    if filters.get("price_min") is not None:
+        conditions.append("CAST(fi.total_price AS REAL) >= ?")
+        params.append(float(filters["price_min"]))
+    if filters.get("price_max") is not None:
+        conditions.append("CAST(fi.total_price AS REAL) <= ?")
+        params.append(float(filters["price_max"]))
+
+    # Hierarchical category prefix: "food" matches "food", "food > dairy",
+    # "food > dairy > milk" — i.e. everything at or under the given node.
+    category_path = filters.get("category_path")
+    if category_path:
+        prefix = str(category_path).strip().lower()
+        conditions.append(
+            "(LOWER(fi.category_path) = ? OR LOWER(fi.category_path) LIKE ?)"
+        )
+        params.append(prefix)
+        params.append(f"{prefix} > %")
+
     where = " AND ".join(conditions)
 
     rows = db.fetchall(
         f"""SELECT fi.id, fi.name, fi.quantity, fi.unit_price, fi.total_price,
-                   fi.category, fi.brand, f.vendor, f.event_date, f.currency
+                   fi.category, fi.category_path, fi.brand, f.vendor, f.vendor_key,
+                   f.event_date, f.event_time, f.currency, f.country
             FROM fact_items fi
             JOIN facts f ON fi.fact_id = f.id
             WHERE {where}
-            ORDER BY f.event_date DESC""",  # noqa: S608
+            ORDER BY f.event_date DESC, f.event_time DESC""",  # noqa: S608
         tuple(params),
     )
     return [dict(row) for row in rows]

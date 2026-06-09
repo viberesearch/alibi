@@ -23,12 +23,16 @@ _VAT_KEYWORDS = {
     "btw",  # Dutch: BTW
     "dph",  # Czech/Slovak: DPH
     "ндс",  # Russian: НДС (VAT)
+    "kdv",  # Turkish: Katma Değer Vergisi (Turkey / Northern Cyprus)
 }
 
 _SALES_TAX_KEYWORDS = {
     "sales tax",
     "sales_tax",
     "salestax",
+    "hst",  # Canada: Harmonized Sales Tax
+    "pst",  # Canada: Provincial Sales Tax
+    "qst",  # Canada: Quebec Sales Tax
 }
 
 _GST_KEYWORDS = {

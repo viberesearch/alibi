@@ -141,6 +141,16 @@ class EnrichmentSubscriber:
             # Phase 3: queue items still lacking brand+category for Gemini
             self._queue_for_gemini(db, document_id)
 
+            # Sync the materialised item_stars mirror with the Phase 1+2 writes
+            # (brand/category/comparable fields written directly to fact_items).
+            # Phase 3 (async Gemini) refreshes separately when its batch flushes.
+            if enriched:
+                from alibi.services.item_stars import (
+                    refresh_item_stars_for_document,
+                )
+
+                refresh_item_stars_for_document(db, document_id)
+
         except Exception:
             logger.exception(
                 "Enrichment failed for document %s",
@@ -230,6 +240,14 @@ class EnrichmentSubscriber:
                     "Gemini Phase 3 enriched %d/%d queued items",
                     enriched,
                     len(items),
+                )
+                # Sync item_stars for the facts owning the enriched items.
+                from alibi.services.item_stars import (
+                    refresh_item_stars_for_items,
+                )
+
+                refresh_item_stars_for_items(
+                    db, [r.item_id for r in results if r.success]
                 )
 
             # Trigger OFF contribution for barcode items enriched by Gemini

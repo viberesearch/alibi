@@ -59,7 +59,6 @@ class TestDatabaseManager:
         expected_tables = [
             "users",
             "spaces",
-            "space_members",
             "items",
             "item_documents",
             "item_facts",

@@ -53,15 +53,19 @@ def _record_correction(
 
 # Fields that callers are permitted to update on a fact via update_fact().
 # This is an explicit allowlist — unknown fields are rejected.
-_UPDATABLE_FIELDS = frozenset({"vendor", "amount", "date", "fact_type", "vendor_key"})
+_UPDATABLE_FIELDS = frozenset(
+    {"vendor", "amount", "date", "time", "fact_type", "vendor_key", "country"}
+)
 
 # Map service-level field names to their column names in the facts table.
 _FIELD_TO_COLUMN: dict[str, str] = {
     "vendor": "vendor",
     "amount": "total_amount",
     "date": "event_date",
+    "time": "event_time",
     "fact_type": "fact_type",
     "vendor_key": "vendor_key",
+    "country": "country",
 }
 
 
@@ -372,6 +376,7 @@ _UPDATABLE_ITEM_FIELDS = frozenset(
         "barcode",
         "brand",
         "category",
+        "category_path",
         "comparable_name",
         "name",
         "enrichment_source",
@@ -387,6 +392,7 @@ _ITEM_FIELD_TO_COLUMN: dict[str, str] = {
     "barcode": "barcode",
     "brand": "brand",
     "category": "category",
+    "category_path": "category_path",
     "comparable_name": "comparable_name",
     "name": "name",
     "enrichment_source": "enrichment_source",

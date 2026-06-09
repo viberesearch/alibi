@@ -111,7 +111,7 @@ Only invoked when the text parser's confidence is below threshold. Two modes:
 - **Correction prompt** (confidence >= 0.3): Sends only uncertain text regions with confidence hints. ~60% token reduction.
 - **Full prompt** (confidence < 0.3): Sends complete OCR text for full extraction.
 
-Local-first (qwen3.5:9b via Ollama), with cloud fallback (Gemini Flash) when the local model can't handle the document. Each cloud call is tracked -- the system learns vendor templates to avoid future escalation.
+Local-first (gemma4:12b via Ollama, the default structuring model), with cloud fallback (Gemini Flash) when the local model can't handle the document. Decoding is constrained to a JSON schema (Ollama `format`) so the model emits valid, conforming output. Each cloud call is tracked -- the system learns vendor templates to avoid future escalation.
 
 ### YAML Intermediary
 Processing is split into two phases:
@@ -210,6 +210,23 @@ flowchart TD
 | 8 | Anthropic cloud | 0.85 | brand, category refinement |
 
 Each source records its provenance (`enrichment_source`) and confidence (`enrichment_confidence`). Higher-confidence sources override lower ones.
+
+### Local Field-Filling Passes
+
+Separate from the barcode/brand cascade above, a family of decoupled, local-first LLM passes fill the analytical fields that make items comparable. Each batches pending `fact_items` by vendor, prompts the local structuring model under a JSON-schema constraint, and is idempotent (a per-field sentinel column marks processed rows — including those the model answered with "no value" — so unsolvable rows are not re-sent every run):
+
+| Pass (`lt enrich …`) | Fills | Notes |
+|---|---|---|
+| `all` | unit, comparable_name, category, attributes | one call per vendor batch (~4x fewer round-trips), with single-field fallbacks |
+| `comparable-names` | `comparable_name` | brand/size-stripped English product type |
+| `units` | `unit`, `unit_quantity` | reads package size from the item name; recomputes `comparable_unit_price` |
+| `categorize` | `category_path` | controlled taxonomy; versioned sentinel re-selects on a taxonomy bump |
+| `attributes` | `attributes` JSON facets | size / fat_pct / organic / free_range / … (+ counted-pack → per-piece) |
+| `states` | `attributes.state` | closed vocabulary (fresh / frozen / canned / dried / cured / pickled / roasted / cooked) — the within-form discriminator the unit can't express (fresh vs canned, raw vs roasted) |
+
+**comparable_name canonicalization** has two further passes: `tidy-comparable-names` deterministically strips leftover size/pack tokens, and `propose-name-merges` → `apply-name-merges` cluster semantic duplicates (synonyms, singular/plural, OCR garble) by embedding similarity **within each `comparable_unit`** and rewrite them onto a canonical — human-review-gated (it writes a proposal file; nothing merges until a human approves).
+
+These passes write straight to `fact_items`; the `item_stars` analytics mirror is refreshed for the affected facts (or fully rebuilt via `lt items rebuild`).
 
 ### Product Variant vs. Product Attributes
 

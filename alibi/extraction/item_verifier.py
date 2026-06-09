@@ -877,11 +877,74 @@ class CrossValidationResult:
     item_count_mismatch: int = 0  # declared - actual (positive = items missing)
 
 
+# A printed monetary value: 1.23 / 1,23 / -1.35 / 1.234,56 ending in 2 decimals.
+_MONEY_RE = re.compile(r"-?\d[\d.,]*[.,]\d{2}(?!\d)")
+# Lines that carry an amount but are NOT product rows (totals/tax/payment/footer).
+_SUMMARY_MARKERS = (
+    "total",
+    "subtotal",
+    "sub-total",
+    "σύνολο",
+    "συνολο",
+    "υποσύνολο",
+    "υποσυνολο",
+    "mwst",
+    "vat",
+    "φπα",
+    "φπa",
+    "kdv",
+    "tva",
+    "iva",
+    "gst",
+    "hst",
+    "ндс",
+    "change",
+    "cash",
+    "card",
+    "κάρτα",
+    "καρτα",
+    "tendered",
+    "balance",
+    "due",
+    "payment",
+    "αλλαγη",
+    "ρεστα",
+    "итого",
+    "toplam",
+    "ara toplam",
+    "metpht",
+)
+
+
+def count_amount_lines(text: str) -> int:
+    """Approximate the number of item rows by counting Amount-column lines.
+
+    On a receipt the Amount/Price column has one entry per item (a product's
+    Description may wrap across several lines, but its amount sits on one line),
+    so the count of money-bearing lines -- minus the totals/tax/payment summary
+    -- is a good proxy for the item count. Discount rows are real amount lines
+    and are intentionally counted (they are negative line items).
+    """
+    if not text:
+        return 0
+    n = 0
+    for line in text.splitlines():
+        if not _MONEY_RE.search(line):
+            continue
+        low = line.lower()
+        if any(m in low for m in _SUMMARY_MARKERS):
+            continue
+        n += 1
+    return n
+
+
 def cross_validate_receipt(extracted: dict[str, Any]) -> CrossValidationResult:
-    """Layer 3: check sum(item.total_price) vs receipt total.
+    """Layer 3: check sum(item.total_price) vs receipt total, and the extracted
+    item count vs the number of Amount-column lines on the receipt.
 
     Returns CrossValidationResult with warnings and needs_review flag.
-    When mismatch > 50%, sets needs_review=True.
+    When the amount mismatch > 50%, or far fewer items were extracted than the
+    receipt has amount lines, sets needs_review=True.
     """
     result = CrossValidationResult()
 
@@ -951,6 +1014,24 @@ def cross_validate_receipt(extracted: dict[str, Any]) -> CrossValidationResult:
                 missed = investigate_missing_items(extracted, declared)
                 if missed:
                     result.warnings.append(f"Possible missed items from OCR: {missed}")
+
+    # Amount-line coverage: how many item rows does the OCR have vs how many we
+    # extracted? Works even when the receipt does not print an item count.
+    ocr_text = extracted.get("raw_text") or extracted.get("ocr_text") or ""
+    amount_lines = count_amount_lines(ocr_text)
+    n_items = len(items)
+    if amount_lines >= 4 and n_items < amount_lines * Decimal("0.6"):
+        result.warnings.append(
+            f"Extracted {n_items} items but the receipt has ~{amount_lines} "
+            f"amount lines — likely missing items"
+        )
+        logger.info(
+            "Amount-line coverage low: extracted=%d amount_lines=%d",
+            n_items,
+            amount_lines,
+        )
+        if n_items < amount_lines * Decimal("0.4"):
+            result.needs_review = True
 
     return result
 

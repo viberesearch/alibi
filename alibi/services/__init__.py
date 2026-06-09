@@ -64,6 +64,10 @@ from alibi.services.correction import (
     update_fact,
     update_fact_item,
 )
+from alibi.services.dedup import (
+    deduplicate_after_batch,
+    deduplicate_facts,
+)
 from alibi.services.identity import (
     get_identity,
     list_identities,
@@ -89,6 +93,17 @@ from alibi.services.items import (
     get_item_facts,
     list_items,
     update_item,
+)
+from alibi.services.item_stars import (
+    avg_comparable_price,
+    basket_composition,
+    list_attribute_facets,
+    list_item_stars,
+    price_trend,
+    rebuild_item_stars,
+    refresh_item_stars_for_document,
+    refresh_item_stars_for_fact,
+    refresh_item_stars_for_items,
 )
 from alibi.services.enrichment_review import (
     confirm_enrichment,
@@ -160,6 +175,16 @@ __all__ = [
     "create_item",
     "update_item",
     "delete_item",
+    # item_stars (item analytics)
+    "rebuild_item_stars",
+    "refresh_item_stars_for_fact",
+    "refresh_item_stars_for_document",
+    "refresh_item_stars_for_items",
+    "list_item_stars",
+    "avg_comparable_price",
+    "price_trend",
+    "basket_composition",
+    "list_attribute_facets",
     # query
     "get_fact",
     "inspect_fact",
@@ -175,6 +200,9 @@ __all__ = [
     "category_summary",
     "delete_document",
     "delete_fact",
+    # dedup
+    "deduplicate_facts",
+    "deduplicate_after_batch",
     # correction
     "delete_fact_item",
     "move_bundle",

@@ -28,7 +28,9 @@ from alibi.db.models import (
     TaxType,
     UnitType,
 )
+from alibi.clouds.dedup import select_item_atoms
 from alibi.extraction.historical import make_vendor_key
+from alibi.normalizers.vendors import normalize_vendor_slug
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -142,7 +144,9 @@ def _collapse_single(cloud: Cloud, bundle: dict[str, Any]) -> CollapseResult:
     vendor = _extract_vendor(atoms)
     total = _extract_total(atoms)
     currency = _extract_currency(atoms)
+    country = _extract_country(atoms)
     event_date = _extract_date(atoms)
+    event_time = _extract_time(atoms)
     payments = _extract_payments(atoms)
     items = _extract_items(atoms, currency)
 
@@ -157,7 +161,9 @@ def _collapse_single(cloud: Cloud, bundle: dict[str, Any]) -> CollapseResult:
         vendor_key=vendor_key,
         total_amount=total,
         currency=currency,
+        country=country,
         event_date=event_date,
+        event_time=event_time,
         payments=payments,
         status=FactStatus.CONFIRMED,
     )
@@ -168,6 +174,24 @@ def _collapse_single(cloud: Cloud, bundle: dict[str, Any]) -> CollapseResult:
         items=items,
         cloud_status=CloudStatus.COLLAPSED,
     )
+
+
+def _one_vendor(vendors: list[str]) -> bool:
+    """Whether a set of raw vendor names refers to a single vendor.
+
+    Normalizes to slugs and treats names as the same vendor when slugs are equal
+    or one contains the other (>= 4 chars) — e.g. "LIDL" and "LIDL Cyprus".
+    Empty input is not corroboration.
+    """
+    slugs = sorted({s for s in (normalize_vendor_slug(v) for v in vendors) if s})
+    if not slugs:
+        return False
+    base = slugs[0]
+    for other in slugs[1:]:
+        shorter, longer = (base, other) if len(base) <= len(other) else (other, base)
+        if not (len(shorter) >= 4 and shorter in longer):
+            return False
+    return True
 
 
 def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResult:
@@ -182,19 +206,20 @@ def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResu
     totals = _extract_all_totals(all_atoms)
     payment_amounts = _extract_payment_amounts(all_atoms)
     event_date = _extract_date(all_atoms)
+    event_time = _extract_time(all_atoms)
     currency = _extract_currency(all_atoms)
+    country = _extract_country(all_atoms)
     payments = _extract_payments(all_atoms)
 
     # Corroboration checks
     confidence = Decimal("0")
 
-    # Same vendor across bundles
-    vendors = set()
-    for b in bundles:
-        v = _extract_vendor(b.get("atoms", []))
-        if v:
-            vendors.add(v.lower())
-    if len(vendors) <= 1 and vendors:
+    # Same vendor across bundles. Compare normalized slugs, not raw names, so
+    # OCR-variant names for one vendor ("LIDL" vs "LIDL Cyprus") on two scans of
+    # the same receipt still corroborate — otherwise a merged duplicate-basket
+    # cloud would score too low to collapse and lose its fact entirely.
+    raw_vendors = [_extract_vendor(b.get("atoms", [])) for b in bundles]
+    if _one_vendor([v for v in raw_vendors if v]):
         confidence += Decimal("0.3")
 
     # Amounts match or sum correctly
@@ -216,7 +241,11 @@ def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResu
 
     # Collapse
     total = max(totals) if totals else None
-    items = _extract_items(all_atoms, currency)
+    # Duplicate baskets (the same receipt scanned twice, now merged into one
+    # cloud by the broadened formation candidate set) must not double the line
+    # items: pick item atoms from non-duplicate bundles only.
+    item_atoms = select_item_atoms(bundles)
+    items = _extract_items(item_atoms, currency)
     fact_type = infer_fact_type(bundles)
     registration = _extract_vendor_registration(all_atoms)
     vendor_key = make_vendor_key(registration, vendor)
@@ -229,7 +258,9 @@ def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResu
         vendor_key=vendor_key,
         total_amount=total,
         currency=currency,
+        country=country,
         event_date=event_date,
+        event_time=event_time,
         payments=payments,
         status=(
             FactStatus.CONFIRMED if confidence >= Decimal("0.8") else FactStatus.PARTIAL
@@ -321,6 +352,32 @@ def _extract_currency(atoms: list[dict[str, Any]]) -> str:
         if "currency" in data:
             return str(data["currency"])
     return "EUR"
+
+
+def _extract_country(atoms: list[dict[str, Any]]) -> str | None:
+    """Extract jurisdiction/country (stamped on the vendor atom) if present."""
+    for atom in atoms:
+        data = atom.get("data", {})
+        if data.get("country"):
+            return str(data["country"])
+    return None
+
+
+def _extract_time(atoms: list[dict[str, Any]]) -> str | None:
+    """Extract the transaction time (HH:MM:SS) from the datetime atom.
+
+    The datetime atom stores "YYYY-MM-DD HH:MM:SS" when a time was printed;
+    return the time portion, or None when only a date is present.
+    """
+    for atom in atoms:
+        atype = atom.get("atom_type", "")
+        if atype == AtomType.DATETIME.value or atype == AtomType.DATETIME:
+            value = str(atom.get("data", {}).get("value", "")).strip()
+            if len(value) > 10:
+                t = value[10:].strip()
+                if t:
+                    return t
+    return None
 
 
 def _extract_date(atoms: list[dict[str, Any]]) -> date | None:

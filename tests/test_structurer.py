@@ -69,9 +69,43 @@ class TestStructureOcrText:
         # via the think=false request field, not an in-prompt /no_think prefix).
         call_args = mock_call.call_args
         assert call_args[0][2] == "Custom emphasis prompt with text\n{...}"
-        # Correction/emphasis retries are not schema-constrained.
+        # An emphasis prompt is unconstrained by default (its shape may differ
+        # from the extraction schema — micro-prompts, enrichment item-lists).
         assert call_args.kwargs.get("response_format") is None
         assert result["vendor"] == "Test"
+
+    @patch("alibi.extraction.structurer._call_ollama_text")
+    def test_caller_response_format_wins_over_emphasis(self, mock_call):
+        """An enrichment caller's own item-list schema constrains decoding even
+        with an emphasis prompt of a different shape — the malformed-JSON fix."""
+        mock_call.return_value = {"response": json.dumps({"items": []})}
+        schema = {"type": "object", "properties": {"items": {"type": "array"}}}
+        structure_ocr_text(
+            "",
+            model="gemma4:12b",
+            ollama_url="http://test:11434",
+            emphasis_prompt="Give me states\n{...}",
+            response_format=schema,
+        )
+        # Used verbatim (not overridden by the doc extraction schema).
+        assert mock_call.call_args.kwargs.get("response_format") is schema
+
+    @patch("alibi.extraction.structurer._call_ollama_text")
+    def test_emphasis_schema_enforced_when_opted_in(self, mock_call):
+        """A correction/emphasis retry opts into the extraction schema."""
+        mock_call.return_value = {
+            "response": json.dumps({"vendor": "Test", "total": 5.00})
+        }
+        structure_ocr_text(
+            "text",
+            model="qwen3:30b",
+            ollama_url="http://test:11434",
+            emphasis_prompt="Correct this and return the standard schema\n{...}",
+            enforce_schema=True,
+        )
+        fmt = mock_call.call_args.kwargs.get("response_format")
+        assert isinstance(fmt, dict)
+        assert "line_items" in fmt.get("properties", {})
 
     @patch("alibi.extraction.structurer._call_ollama_text")
     def test_schema_enforced_for_default_path(self, mock_call):

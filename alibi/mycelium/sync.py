@@ -254,7 +254,7 @@ def process_after_sync(
     suitable for use in a cron job or git hook.
 
     Args:
-        vault_path: Path to the vault (defaults to ~/Obsidian/vault)
+        vault_path: Path to the vault (defaults to family-vault)
         generate_notes: Whether to generate Obsidian notes
         archive_processed: Whether to archive processed files
 

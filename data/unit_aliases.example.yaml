@@ -1,0 +1,13 @@
+# Unit alias mappings -- maps raw strings to canonical unit types.
+# Keys are lowercased automatically. Values must be valid UnitType values:
+#   g, kg, lb, oz, ml, l, gal, pcs, pack, kWh, m, sqm, cbm, hr, min, other
+#
+# Copy to data/unit_aliases.yaml and customize for your locale.
+#
+# Examples for common European units:
+# kilogramm: kg
+# litre: l
+# stueck: pcs
+# gramm: g
+# milliliter: ml
+# kilowattstunde: kWh

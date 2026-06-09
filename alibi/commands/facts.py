@@ -460,6 +460,59 @@ def facts_recollapse(cloud_id: str) -> None:
         console.print("[yellow]Cloud could not collapse (stays forming).[/yellow]")
 
 
+@facts.command("dedup")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Delete redundant twins (default: dry-run plan only).",
+)
+def facts_dedup(apply_changes: bool) -> None:
+    """Detect and resolve duplicate facts (same transaction ingested twice).
+
+    Auto-merges only corroborated duplicates — a zero-item twin, a matching
+    document perceptual hash, or overlapping item prices — keeping the richest
+    twin. Anything ambiguous is listed under REVIEW and left untouched. Back up
+    the database before running with --apply.
+    """
+    from alibi.services.dedup import deduplicate_facts
+
+    db_manager = get_db()
+    if not db_manager.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    report = deduplicate_facts(db_manager, apply=apply_changes)
+
+    for action in report.resolved:
+        k, r = action.keeper, action.redundant
+        verb = "MERGED" if apply_changes else "WOULD MERGE"
+        console.print(
+            f"[green]{verb}[/green] keep {k.fact_id[:8]} (items={k.n_items}) "
+            f"<- drop {r.fact_id[:8]} (items={r.n_items})  "
+            f"[dim]{k.vendor}/{k.event_date}/{k.total_amount} — {action.reason}[/dim]"
+        )
+    for action in report.review:
+        k, r = action.keeper, action.redundant
+        console.print(
+            f"[yellow]REVIEW[/yellow] {k.fact_id[:8]} (items={k.n_items}) ~ "
+            f"{r.fact_id[:8]} (items={r.n_items})  "
+            f"[dim]{k.vendor}/{k.event_date}/{k.total_amount} — {action.reason}[/dim]"
+        )
+
+    verb = "Resolved" if apply_changes else "Would resolve"
+    console.print(
+        f"\n{verb} [bold]{report.resolved_count}[/bold] duplicate(s); "
+        f"[bold]{report.review_count}[/bold] flagged for review."
+    )
+    if not apply_changes and report.resolved_count:
+        console.print(
+            "[dim]Dry-run only. Re-run with --apply to delete redundant twins "
+            "(back up the DB first).[/dim]"
+        )
+
+
 @facts.command("dispute")
 @click.argument("cloud_id")
 def facts_dispute(cloud_id: str) -> None:

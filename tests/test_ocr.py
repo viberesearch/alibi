@@ -11,6 +11,8 @@ from alibi.extraction.ocr import (
     MIN_OCR_CHARS,
     _ROTATION_CANDIDATES,
     _is_non_latin,
+    _ocr_quality_score,
+    _orientation_suspect,
     _prepare_image_for_ocr,
     _prepare_image_enhanced,
     _prepare_rotated_image,
@@ -414,38 +416,87 @@ class TestPrepareRotatedImage:
         assert result[:2] == b"\xff\xd8"  # JPEG magic bytes
 
 
+class TestOrientationScoring:
+    """Tests for the OCR quality score and orientation-suspect gate."""
+
+    def test_more_distinct_priced_lines_scores_higher(self):
+        few = "Milk 1.29\nBread 2.50\n"
+        many = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\nCheese 5.55\n"
+        assert _ocr_quality_score(many) > _ocr_quality_score(few)
+
+    def test_hallucination_loop_scores_low(self):
+        loop = "9.99 X\n" * 200
+        legible = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\n"
+        # Loop collapses to ~1 distinct priced line; legible has 4.
+        assert _ocr_quality_score(legible) > _ocr_quality_score(loop)
+
+    def test_short_text_scores_zero(self):
+        assert _ocr_quality_score("x 1.00") == 0.0
+
+    def test_clean_upright_not_suspect(self):
+        clean = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\nCheese 5.55\n"
+        assert _orientation_suspect(clean) is False
+
+    def test_short_read_is_suspect(self):
+        assert _orientation_suspect("ab") is True
+
+    def test_symbol_noisy_read_is_suspect(self):
+        noisy = "|}{~ #@ ^&* <>?? |||| \\\\// []{}|~ #@^&* <>?? ||||"
+        assert _orientation_suspect(noisy) is True
+
+
 class TestTryRotations:
-    """Tests for rotation-based OCR recovery."""
+    """Tests for the scored 4-way orientation sweep.
+
+    The sweep OCRs the 90/180/270 rotations, scores each by DISTINCT priced
+    lines (+ a coherence tiebreaker), and returns the best orientation only
+    when it beats the supplied upright baseline. Scoring by distinct priced
+    lines means a hallucination loop (one priced line repeated) never wins.
+    """
+
+    GOOD = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\nCheese 5.55\n"
+    BETTER = GOOD + "Coffee 6.49\nTea 1.99\nSugar 0.89\n"
 
     @patch("alibi.extraction.ocr._ocr_band_bytes")
     @patch("alibi.extraction.ocr._prepare_rotated_image")
-    def test_returns_first_good_rotation(self, mock_prep, mock_ocr, sample_image: Path):
-        """180° produces enough text — returns immediately without trying others."""
+    def test_best_scoring_rotation_wins(self, mock_prep, mock_ocr, sample_image: Path):
+        """Sweeps all 3 rotations and picks the one with the most priced lines."""
         mock_prep.return_value = b"fake_jpeg"
-        mock_ocr.return_value = "A" * MIN_OCR_CHARS
+        # 90deg good, 180deg best, 270deg good
+        mock_ocr.side_effect = [self.GOOD, self.BETTER, self.GOOD]
 
         text, degrees = _try_rotations(
-            sample_image, "glm-ocr", "http://test:11434", 60.0
+            sample_image,
+            "glm-ocr",
+            "http://test:11434",
+            60.0,
+            base_text="noise " * 6,
         )
-        assert text == "A" * MIN_OCR_CHARS
-        assert degrees == 180  # First candidate
-        assert mock_ocr.call_count == 1
+        assert text == self.BETTER
+        assert degrees == 180
+        assert mock_ocr.call_count == 3
 
     @patch("alibi.extraction.ocr._ocr_band_bytes")
     @patch("alibi.extraction.ocr._prepare_rotated_image")
-    def test_tries_all_rotations_when_all_short(
+    def test_hallucination_loop_does_not_win(
         self, mock_prep, mock_ocr, sample_image: Path
     ):
-        """All rotations return short text — returns best of them."""
+        """A rotation that is a hallucination loop (one priced line repeated)
+        must not beat a legible base with more distinct priced lines."""
         mock_prep.return_value = b"fake_jpeg"
-        mock_ocr.side_effect = ["ab", "abcde", "abc"]
+        loop = "9.99 TOTAL\n" * 200
+        mock_ocr.side_effect = [loop, loop, loop]
 
         text, degrees = _try_rotations(
-            sample_image, "glm-ocr", "http://test:11434", 60.0
+            sample_image,
+            "glm-ocr",
+            "http://test:11434",
+            60.0,
+            base_text=self.BETTER,
         )
-        assert text == "abcde"
-        assert degrees == 270  # Second candidate had longest text
-        assert mock_ocr.call_count == 3
+        # Base has 8 distinct priced lines; the loop collapses to 1 -> base kept.
+        assert text is None
+        assert degrees is None
 
     @patch("alibi.extraction.ocr._ocr_band_bytes")
     @patch("alibi.extraction.ocr._prepare_rotated_image")
@@ -454,15 +505,15 @@ class TestTryRotations:
         mock_prep.return_value = b"fake_jpeg"
         mock_ocr.side_effect = [
             VisionExtractionError("model error"),
-            "A" * MIN_OCR_CHARS,
-            "short",
+            self.BETTER,
+            self.GOOD,
         ]
 
         text, degrees = _try_rotations(
-            sample_image, "glm-ocr", "http://test:11434", 60.0
+            sample_image, "glm-ocr", "http://test:11434", 60.0, base_text=""
         )
-        assert text == "A" * MIN_OCR_CHARS
-        assert degrees == 270  # Second candidate (first failed)
+        assert text == self.BETTER
+        assert degrees == 180  # 180 scored highest among the surviving rotations
 
     @patch("alibi.extraction.ocr._ocr_band_bytes")
     @patch("alibi.extraction.ocr._prepare_rotated_image")

@@ -72,52 +72,63 @@ async def export_transactions_csv(
 async def export_line_items_csv(
     db: Annotated[DatabaseManager, Depends(get_database)],
     user: Annotated[dict[str, Any], Depends(require_user)],
+    name: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    brand: Optional[str] = Query(None),
+    vendor: Optional[str] = Query(None),
+    vendor_key: Optional[str] = Query(None),
+    currency: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    datetime_from: Optional[str] = Query(None),
+    datetime_to: Optional[str] = Query(None),
+    price_min: Optional[float] = Query(None),
+    price_max: Optional[float] = Query(None),
 ) -> StreamingResponse:
-    """Export fact items (line items) as CSV."""
-    filters: dict[str, Any] = {}
-    if category:
-        filters["category"] = category
-    if date_from:
-        filters["date_from"] = date_from
-    if date_to:
-        filters["date_to"] = date_to
+    """Export fact items (line items) as CSV, filterable along every axis."""
+    filters: dict[str, Any] = {
+        k: v
+        for k, v in {
+            "name": name,
+            "category": category,
+            "brand": brand,
+            "vendor": vendor,
+            "vendor_key": vendor_key,
+            "currency": currency,
+            "country": country,
+            "date_from": date_from,
+            "date_to": date_to,
+            "datetime_from": datetime_from,
+            "datetime_to": datetime_to,
+            "price_min": price_min,
+            "price_max": price_max,
+        }.items()
+        if v is not None
+    }
 
     rows = list_fact_items_with_fact(db, filters=filters)
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(
-        [
-            "id",
-            "name",
-            "quantity",
-            "unit_price",
-            "total_price",
-            "category",
-            "brand",
-            "vendor",
-            "event_date",
-            "currency",
-        ]
-    )
+    cols = [
+        "id",
+        "name",
+        "quantity",
+        "unit_price",
+        "total_price",
+        "category",
+        "brand",
+        "vendor",
+        "vendor_key",
+        "event_date",
+        "event_time",
+        "currency",
+        "country",
+    ]
+    writer.writerow(cols)
     for row in rows:
-        writer.writerow(
-            [
-                row["id"],
-                row["name"],
-                row["quantity"],
-                row["unit_price"],
-                row["total_price"],
-                row["category"],
-                row["brand"],
-                row["vendor"],
-                row["event_date"],
-                row["currency"],
-            ]
-        )
+        writer.writerow([row.get(c) for c in cols])
 
     output.seek(0)
     return StreamingResponse(

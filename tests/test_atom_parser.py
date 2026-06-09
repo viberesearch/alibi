@@ -933,7 +933,7 @@ class TestMigration009:
         config = Config(db_path=tmp_path / "test.db")
         manager = DatabaseManager(config)
         manager.initialize()
-        assert manager.get_schema_version() == 35
+        assert manager.get_schema_version() == 44
         manager.close()
 
 

@@ -2842,7 +2842,80 @@ def _is_non_item_line(line: str) -> bool:
     ):
         return True
 
+    # Greek total/payment markers that OCR renders in look-alike Latin glyphs
+    # (ΚΑΡΤΑ -> "KAPTA", ΣΥΝΟΛΟ -> "ΣΥΝΟΛO"/"SYNOLO", ΜΕΤΡΗΤΑ -> cash).
+    _greek_latin_markers = (
+        "kapta",  # ΚΑΡΤΑ (card)
+        "καρτα",
+        "συνολ",  # ΣΥΝΟΛΟ (total) — substring also matches Latin-O OCR variant
+        "synol",
+        "υποσυνολ",  # subtotal
+        "μετρητα",  # cash
+        "μετρητoι",
+    )
+    if any(m in low for m in _greek_latin_markers):
+        return True
+
+    # VAT-analysis rows led by a single rate-class letter (Latin A-E or Greek
+    # Α-Ε) then a percentage: "B 5 % 1,06 20,91", "Α 19% 0,08 0,41".
+    if re.match(r"^[a-eα-ε]\s+\d+[.,]?\d*\s*%", low):
+        return True
+
+    # A merged OCR footer captured as one giant "item": very long with many
+    # money tokens. Real item names are short; this guards the blob case.
+    if len(line.strip()) > 150 and len(re.findall(r"\d+[.,]\d{2}", line)) >= 4:
+        return True
+
+    # Restaurant / receipt header metadata mis-parsed as items (table & check
+    # numbers, phone/fax lines). Anchored so "HOTEL:" can't match "tel:".
+    if re.match(r"^(tel|fax|tel/fax|phone|t[eé]l)[\s./:]", low):
+        return True
+    if any(
+        kw in low
+        for kw in (
+            "check #",
+            "check#",
+            "table #",
+            "table#",
+            "server:",
+            "guests:",
+            "covers:",
+            "order #",
+        )
+    ):
+        return True
+
     return False
+
+
+# Standalone quantity-multiplier lines ("2 x", "3 x 4.79", "2 x 4.79'") that
+# OCR splits off from the item they belong to. They carry no item of their own.
+_MULTIPLIER_ONLY_RE = re.compile(r"^\d+\s*[x×х*]\s*[\d.,]*'?$", re.IGNORECASE)
+
+
+def _is_pollution_item(name: str) -> bool:
+    """True if a parsed line item's name is actually non-item noise."""
+    if not name or not name.strip():
+        return True
+    low = name.strip().lower()
+    if _MULTIPLIER_ONLY_RE.match(low):
+        return True
+    return _is_non_item_line(name)
+
+
+def filter_pollution_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop non-item lines (totals, VAT-analysis rows, payment/footer, bare
+    'N x' multipliers) that leak into line_items and inflate cross-validation.
+
+    Pipeline-agnostic final guard: applied after structuring so it also catches
+    pollution reintroduced by the LLM (micro_prompts) path, not just the parser.
+    Malformed (non-dict) entries are dropped rather than raising.
+    """
+    return [
+        it
+        for it in items
+        if isinstance(it, dict) and not _is_pollution_item(str(it.get("name") or ""))
+    ]
 
 
 def _extract_totals(

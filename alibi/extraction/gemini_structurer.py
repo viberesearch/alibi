@@ -200,7 +200,11 @@ Extract unit_raw="g", unit_quantity=500.
 11. VAT SUMMARY: Extract percentage rates (5.00, 19.00), NOT category codes.
 12. vendor_vat is VAT registration, vendor_tax_id is separate TIC/TIN number.
 13. Use null for any field that is not visible or unclear.
-14. Include ALL line items, even if some fields are missing."""
+14. Include ALL line items, even if some fields are missing.
+15. DISCOUNTS: a discount/refund row reduces the bill — give it a NEGATIVE \
+total_price (e.g. -1.35) and include it as a line item, so the sum of all \
+total_price values equals the printed total. There is one Amount-column entry \
+per row, so the number of line items should match the number of amount lines."""
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +228,12 @@ def _get_model() -> str:
     from alibi.config import get_config
 
     return get_config().gemini_extraction_model
+
+
+def _get_max_output_tokens() -> int:
+    from alibi.config import get_config
+
+    return get_config().gemini_max_output_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +291,11 @@ def structure_ocr_text_gemini(
                 response_mime_type="application/json",
                 response_schema=extraction_model,
                 temperature=0.1,
-                max_output_tokens=2048,
+                # Disable thinking: 2.5-flash otherwise spends the output
+                # budget on reasoning tokens, truncating the JSON to
+                # unparseable fragments. Extraction needs no chain-of-thought.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=_get_max_output_tokens(),
             ),
         )
 
@@ -384,7 +398,11 @@ def extract_from_image_gemini(
                 response_mime_type="application/json",
                 response_schema=extraction_model,
                 temperature=0.1,
-                max_output_tokens=2048,
+                # Disable thinking: 2.5-flash otherwise spends the output
+                # budget on reasoning tokens, truncating the JSON to
+                # unparseable fragments. Extraction needs no chain-of-thought.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=_get_max_output_tokens(),
             ),
         )
 
@@ -466,7 +484,13 @@ def structure_ocr_texts_gemini(
                 response_mime_type="application/json",
                 response_schema=ExtractionBatchResponse,
                 temperature=0.1,
-                max_output_tokens=4096,  # batch responses are larger
+                # Disable thinking: 2.5-flash otherwise spends the output
+                # budget on reasoning tokens, truncating the JSON to
+                # unparseable fragments. Extraction needs no chain-of-thought.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=max(
+                    _get_max_output_tokens(), 8192
+                ),  # batch is larger
             ),
         )
 

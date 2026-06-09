@@ -379,7 +379,9 @@ class Fact(TimestampedModel):
     vendor_key: Optional[str] = None
     total_amount: Optional[Decimal] = None
     currency: str = "EUR"
+    country: Optional[str] = None  # Jurisdiction: ISO alpha-2 or "CY-NORTH"
     event_date: Optional[date] = None
+    event_time: Optional[str] = None  # Transaction time HH:MM:SS (if printed)
     payments: Optional[list[dict[str, Any]]] = None
     status: FactStatus = FactStatus.CONFIRMED
 

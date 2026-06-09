@@ -92,6 +92,5 @@ which were silently broken by the same reasoning-budget bug.
 - Requires Ollama ≥ 0.30 (the `think` request field). Ollama is pinned ≥ 0.19.x;
   this raises the effective floor for the local structuring path.
 - Cloud (Gemini) path unchanged — it already enforced the contract.
-- The general lesson generalizes to any local structured-output task on
-  Ollama: pass the JSON schema as `format` and disable reasoning with
-  `think=false` for hybrid models.
+- The general lesson (Ollama `think=false` + `format` schema for local
+  structured output) is general: use Ollama `think=false` with a `format` schema for local structured output.

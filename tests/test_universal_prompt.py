@@ -194,6 +194,27 @@ class TestGetPromptForType:
         assert "document_date" in prompt  # V1 uses document_date, not date
 
 
+class TestUnitCaptureGuidance:
+    """The V2 prompts must instruct embedded-size + multipack unit capture.
+
+    Without this, items like "PASTA 450G" / "OLIVE OIL 2L" / "TOM.PASTE 4X70G"
+    default to unit=pcs and lose cross-vendor comparability (comparable_unit_price
+    can't normalise to EUR/kg or EUR/L).
+    """
+
+    def test_v2_receipt_and_universal_have_embedded_size_rule(self) -> None:
+        from alibi.extraction.prompts import RECEIPT_PROMPT_V2
+
+        for prompt in (
+            RECEIPT_PROMPT_V2,
+            UNIVERSAL_PROMPT_V2,
+            get_prompt_for_type("receipt", version=2, mode="specialized"),
+        ):
+            assert "EMBEDDED SIZE TOKEN" in prompt
+            assert "MULTIPACK" in prompt
+            assert "unit_quantity" in prompt
+
+
 # ---------------------------------------------------------------------------
 # Universal schema tests
 # ---------------------------------------------------------------------------

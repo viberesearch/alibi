@@ -1,5 +1,7 @@
 """Database connection management for Alibi."""
 
+import logging
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -7,6 +9,8 @@ from pathlib import Path
 from typing import Any, Generator, Optional
 
 from alibi.config import Config, get_config
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Register explicit adapters/converters to replace the deprecated defaults
@@ -45,6 +49,7 @@ class DatabaseManager:
         """Initialize database manager with configuration."""
         self.config = config or get_config()
         self._connection: Optional[sqlite3.Connection] = None
+        self._migration_checked = False
 
     @property
     def db_path(self) -> Path:
@@ -87,7 +92,68 @@ class DatabaseManager:
             self._connection.execute("PRAGMA journal_mode = WAL")
             # Use Row factory for dict-like access
             self._connection.row_factory = sqlite3.Row
+            # Bring an existing-but-stale database up to head on first open, so a
+            # plain `lt ...` command never runs against a schema older than the
+            # code (which otherwise fails on a missing column).
+            self._maybe_auto_migrate()
         return self._connection
+
+    def _maybe_auto_migrate(self) -> None:
+        """Apply any pending migrations to an existing database, once.
+
+        Runs at most once per manager. Skips a fresh/uninitialised database
+        (those are built from ``schema.sql`` by :meth:`initialize`, already at
+        head) and a database already at head. Before mutating, it takes a
+        one-shot online backup so a failed or unwanted migration is recoverable.
+        Set ``ALIBI_AUTO_MIGRATE=0`` to opt out (e.g. to migrate manually).
+        """
+        if self._migration_checked:
+            return
+        self._migration_checked = True
+        if os.environ.get("ALIBI_AUTO_MIGRATE", "1") == "0":
+            return
+        if not self.is_initialized():
+            return  # fresh DB — initialize() builds it from schema.sql at head
+
+        from alibi.db.migrate import (
+            auto_migrate,
+            get_current_version,
+            get_pending_migrations,
+        )
+
+        conn = self._connection
+        assert conn is not None  # set by get_connection before this runs
+        if not get_pending_migrations(conn):
+            return
+
+        from_version = get_current_version(conn)
+        self._backup_before_migrate(from_version)
+        applied = auto_migrate(conn)
+        logger.info(
+            "Auto-migrated database from v%d (+%d migration(s)) to head",
+            from_version,
+            applied,
+        )
+
+    def _backup_before_migrate(self, from_version: int) -> None:
+        """Take a one-shot online backup before the first auto-migration."""
+        backup_path = self.db_path.with_name(
+            self.db_path.name + f".bak_premigrate_v{from_version}"
+        )
+        if backup_path.exists():
+            return  # already have a pre-migration snapshot at this version
+        conn = self._connection
+        assert conn is not None
+        dest = sqlite3.connect(str(backup_path))
+        try:
+            conn.backup(dest)  # consistent snapshot, WAL-safe
+        finally:
+            dest.close()
+        logger.info(
+            "Backed up database to %s before migrating from v%d",
+            backup_path,
+            from_version,
+        )
 
     def close(self) -> None:
         """Close the database connection."""

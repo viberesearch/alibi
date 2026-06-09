@@ -13,7 +13,9 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from alibi.db import item_stars
 from alibi.db.connection import DatabaseManager
+from alibi.normalizers.vendors import normalize_vendor_slug
 from alibi.db.models import (
     Atom,
     AtomType,
@@ -181,7 +183,8 @@ def store_fact(
         cursor.execute(
             "INSERT OR IGNORE INTO facts "
             "(id, cloud_id, fact_type, vendor, vendor_key, total_amount, currency, "
-            "event_date, payments, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "country, event_date, event_time, payments, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 fact.id,
                 fact.cloud_id,
@@ -190,7 +193,9 @@ def store_fact(
                 fact.vendor_key,
                 float(fact.total_amount) if fact.total_amount is not None else None,
                 fact.currency,
+                fact.country,
                 fact.event_date.isoformat() if fact.event_date else None,
+                fact.event_time,
                 json.dumps(fact.payments) if fact.payments else None,
                 fact.status.value,
             ),
@@ -240,6 +245,10 @@ def store_fact(
             "UPDATE clouds SET status = ?, confidence = ? WHERE id = ?",
             (CloudStatus.COLLAPSED.value, 1.0, fact.cloud_id),
         )
+        # Keep the materialised item_stars analytics mirror in sync. Runs in
+        # the same transaction so the mirror is never out of step with the
+        # fact it describes. Covers both store paths (pipeline + recollapse).
+        item_stars.refresh_fact(cursor, fact.id)
 
 
 # ---------------------------------------------------------------------------
@@ -292,26 +301,74 @@ def get_bundle_summaries(db: DatabaseManager) -> list[dict[str, Any]]:
     return [bundles_map[bid] for bid in bundle_order]
 
 
+def _bundle_ids_for_vendor_name(
+    db: DatabaseManager, vendor_name: str | None
+) -> set[str]:
+    """Bundle IDs whose vendor atom normalizes to the same slug as vendor_name.
+
+    Name normalization (slugging, legal-suffix stripping) can't be expressed as
+    reliable SQL LIKE on the raw atom JSON, so we normalize in Python. Matches
+    exact normalized slug or substring containment (>= 4 chars) — e.g. "LIDL"
+    against "LIDL Cyprus" — to tolerate trade/legal-name variation. Caller scope
+    is small (one batch's vendors), so the full vendor-atom scan is cheap.
+    """
+    if not vendor_name:
+        return set()
+    target = normalize_vendor_slug(vendor_name)
+    if not target:
+        return set()
+
+    rows = db.fetchall(
+        "SELECT ba.bundle_id, a.data FROM bundle_atoms ba "
+        "JOIN atoms a ON ba.atom_id = a.id "
+        "WHERE a.atom_type = 'vendor'",
+        (),
+    )
+    matched: set[str] = set()
+    for row in rows:
+        data = row["data"]
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+        name = data.get("name") if isinstance(data, dict) else None
+        if not name:
+            continue
+        slug = normalize_vendor_slug(str(name))
+        if not slug:
+            continue
+        shorter, longer = (target, slug) if len(target) <= len(slug) else (slug, target)
+        if slug == target or (len(shorter) >= 4 and shorter in longer):
+            matched.add(row["bundle_id"])
+    return matched
+
+
 def get_bundle_summaries_for_vendor(
     db: DatabaseManager,
     vendor_key: str | None = None,
     vendor_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Load bundle summaries pre-filtered by vendor key.
+    """Load bundle summaries pre-filtered by vendor.
 
-    When a vendor_key (VAT number / registration ID) is available,
-    returns only bundles whose vendor atom contains that key — a
-    reliable and significant reduction of the working set.
+    When a vendor_key (VAT number / registration ID) is available, returns
+    bundles whose vendor atom contains that key — a reliable, significant
+    reduction of the working set. Crucially, the set is *also* widened to
+    bundles whose vendor name normalizes to the same slug, so that OCR variance
+    in the registration ID itself (``300108234`` vs ``30010823A``) does not hide
+    a true twin from cloud formation. Without this, a mis-OCR'd key produced an
+    empty (or wrong) candidate set and a spurious second cloud — the root cause
+    of duplicate facts for one transaction.
 
-    For name-only lookups the pre-filter is skipped because vendor
-    name normalization (legal-suffix stripping, case folding) makes
-    LIKE matching against raw atom JSON unreliable.
+    For name-only lookups the SQL pre-filter is skipped (name normalization
+    makes LIKE matching against raw atom JSON unreliable) and the full set is
+    returned.
 
     Args:
         db: Database manager.
         vendor_key: Vendor registration key (VAT number etc.).
-        vendor_name: Kept for API compatibility; ignored (falls back
-            to full query when vendor_key is absent).
+        vendor_name: Normalized vendor name; widens the candidate set to other
+            bundles with the same normalized vendor when a key is present.
 
     Returns:
         Same format as get_bundle_summaries().
@@ -335,10 +392,13 @@ def get_bundle_summaries_for_vendor(
     matching_rows = db.fetchall(matching_sql, params)
     matching_ids = {row["bundle_id"] for row in matching_rows}
 
+    # Widen by normalized vendor name so OCR-variant keys still get compared.
+    matching_ids |= _bundle_ids_for_vendor_name(db, vendor_name)
+
     if not matching_ids:
-        # No existing bundles share this vendor_key — caller will create
-        # a new cloud anyway, but fall back to full set so that other
-        # matching signals (name, amount, date) still get a chance.
+        # No existing bundles share this vendor at all — caller will create a
+        # new cloud anyway, but fall back to full set so that other matching
+        # signals (name, amount, date) still get a chance.
         return get_bundle_summaries(db)
 
     # Now fetch full summaries only for matching bundles

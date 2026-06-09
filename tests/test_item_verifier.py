@@ -19,6 +19,7 @@ from alibi.extraction.item_verifier import (
     validate_barcode_items,
     verify_items,
     cross_validate_receipt,
+    count_amount_lines,
 )
 
 # ---------------------------------------------------------------------------
@@ -470,6 +471,70 @@ class TestCrossValidateReceipt:
         result = cross_validate_receipt(extracted)
         assert len(result.warnings) == 0
         assert not result.needs_review
+
+    def test_discount_negative_reconciles(self):
+        """A discount as a negative line item makes the sum match the total."""
+        extracted = {
+            "total": "18.65",
+            "line_items": [
+                {"total_price": "10.00"},
+                {"total_price": "10.00"},
+                {"total_price": "-1.35"},  # discount
+            ],
+        }
+        result = cross_validate_receipt(extracted)
+        assert not result.needs_review
+        assert not any("differs from receipt total" in w for w in result.warnings)
+
+    def test_under_extraction_flagged_by_amount_lines(self):
+        """Far fewer items than receipt amount lines -> needs_review."""
+        ocr = (
+            "SHOP\nMILK 1.20\nBREAD 0.90\nEGGS 2.30\nCHEESE 4.10\n"
+            "BUTTER 1.80\nAPPLES 2.50\nYOGURT 1.10\nWATER 0.80\n"
+            "TOTAL 14.70\nCARD 14.70\n"
+        )
+        extracted = {
+            "total": "14.70",
+            "raw_text": ocr,
+            "line_items": [{"total_price": "1.20"}, {"total_price": "0.90"}],
+        }
+        result = cross_validate_receipt(extracted)
+        assert result.needs_review
+        assert any("amount lines" in w for w in result.warnings)
+
+    def test_full_extraction_no_coverage_warning(self):
+        ocr = "SHOP\nMILK 1.20\nBREAD 0.90\nEGGS 2.30\nTOTAL 4.40\n"
+        extracted = {
+            "total": "4.40",
+            "raw_text": ocr,
+            "line_items": [
+                {"total_price": "1.20"},
+                {"total_price": "0.90"},
+                {"total_price": "2.30"},
+            ],
+        }
+        result = cross_validate_receipt(extracted)
+        assert not any("amount lines" in w for w in result.warnings)
+
+
+class TestCountAmountLines:
+    def test_counts_item_rows_excluding_summary(self):
+        ocr = (
+            "MITSIDE FLOUR 1.48\n"
+            "FRESH MILK 2.96\n"
+            "EGGS 12pcs 3.69\n"
+            "Discount -0.45\n"
+            "SUBTOTAL 7.68\n"
+            "VAT 19% 1.23\n"
+            "TOTAL 7.68\n"
+            "CARD 7.68\n"
+        )
+        # 3 products + 1 discount row = 4 amount lines; summaries excluded.
+        assert count_amount_lines(ocr) == 4
+
+    def test_empty(self):
+        assert count_amount_lines("") == 0
+        assert count_amount_lines("no prices here") == 0
 
 
 class TestPriceSwapDetection:

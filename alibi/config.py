@@ -74,6 +74,28 @@ class Config(BaseSettings):
     # OCR timeout per request (seconds)
     ocr_timeout: float = Field(default=120.0)
 
+    # Structuring (Stage 3) request timeout. gemma4:12b can exceed 120s on a
+    # long receipt; raised so long documents finish rather than time out.
+    structure_timeout: float = Field(default=240.0)
+
+    # Hard-document handling -------------------------------------------------
+    # Orientation sweep: when the local OCR base read looks mis-oriented
+    # (short, script-incoherent, or symbol-noisy), run a 4-way 90-degree sweep
+    # and keep the orientation that reads the most DISTINCT priced lines
+    # (robust to glm-ocr hallucination loops). A clean upright receipt is not
+    # flagged, so the extra OCR passes are skipped for the common case.
+    ocr_orientation_sweep: bool = Field(default=True)
+
+    # Confidence-gated cloud escalation. When the local pipeline's verification
+    # confidence is below escalation_confidence_threshold OR the amount-line
+    # coverage check shows dropped items, re-run the document through the cloud
+    # vision model and keep the better result (by coverage + reconciliation).
+    # Independent of gemini_extraction_enabled — cloud stays off for the common
+    # path; this is a targeted rescue for hard docs the local model can't read.
+    # Requires gemini_api_key to be set.
+    gemini_escalation_enabled: bool = Field(default=True)
+    escalation_confidence_threshold: float = Field(default=0.6)
+
     # Image optimization on ingest (Phase 6)
     optimize_images: bool = Field(default=True)
     image_max_dim: int = Field(default=2048)
@@ -147,6 +169,16 @@ class Config(BaseSettings):
     # Gemini extraction (Stage 3 replacement for Ollama qwen3.5:9b)
     gemini_extraction_enabled: bool = Field(default=False)
     gemini_extraction_model: str = Field(default="gemini-3.5-flash")
+    # Output token budget for Gemini extraction/vision. A long receipt (30+
+    # line items) overruns the old 2048 default and returns truncated,
+    # unparseable JSON; 8192 covers the largest documents in the corpus.
+    gemini_max_output_tokens: int = Field(default=8192)
+
+    # Post-batch duplicate-fact resolution. When enabled, a batch ingest runs a
+    # gated dedup pass at the end, auto-merging only corroborated duplicates
+    # (price-overlap / perceptual-hash / zero-item twin) and leaving anything
+    # ambiguous for manual review. Off by default — deletion is opt-in.
+    dedup_after_batch: bool = Field(default=False)
 
     # Open Food Facts contribution (submit enriched products back to OFF)
     off_contribution_enabled: bool = Field(default=False)

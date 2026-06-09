@@ -19,6 +19,7 @@ from alibi.clouds.formation import (
 )
 from alibi.db.connection import DatabaseManager
 from alibi.db import v2_store
+from alibi.normalizers.jurisdiction import apply_jurisdiction
 from alibi.normalizers.units import init_unit_mappings
 from alibi.db.models import (
     BundleType,
@@ -595,12 +596,32 @@ class ProcessingPipeline:
     def _fill_locale_gaps(
         extracted_data: dict[str, Any], folder_context: FolderContext | None
     ) -> None:
-        """Fill missing currency/language from folder context config."""
-        if not folder_context or not extracted_data:
+        """Resolve jurisdiction + currency, then fill remaining locale gaps.
+
+        Jurisdiction inference (country + canonical currency) runs first and is
+        independent of folder context -- it reads the document's own address,
+        tax-term, and currency cues (so a Canadian receipt becomes CAD, a
+        Northern-Cyprus receipt's Lira-or-EUR-or-USD total resolves to TRY).
+        The folder-config defaults only fill values still missing afterwards.
+        """
+        if not extracted_data:
             return
-        ic = folder_context.inbox_config
+        ic = folder_context.inbox_config if folder_context else None
+        default_country = ic.default_country if ic else None
+        apply_jurisdiction(extracted_data, default_country=default_country)
         if ic and ic.default_currency:
             extracted_data.setdefault("currency", ic.default_currency)
+
+        # Drop non-item pollution (totals, VAT-analysis rows, payment/footer,
+        # bare 'N x' multipliers) that inflates cross-validation. Applied here
+        # so every pipeline (parser_only / three_stage / micro_prompts) benefits.
+        from alibi.extraction.text_parser import filter_pollution_items
+
+        items = extracted_data.get("line_items")
+        if isinstance(items, list) and items:
+            cleaned = filter_pollution_items(items)
+            if len(cleaned) != len(items):
+                extracted_data["line_items"] = cleaned
 
     @staticmethod
     def _disambiguate_date(extracted_data: dict[str, Any], file_path: Path) -> None:
@@ -2069,6 +2090,16 @@ class ProcessingPipeline:
             ctx = folder_contexts[i] if folder_contexts else None
             result = self.process_file(file_path, folder_context=ctx)
             results.append(result)
+
+        # Post-batch dedup: collapse any newly-ingested duplicate of an
+        # already-stored transaction (opt-in; safe merges only).
+        if self.config.dedup_after_batch and self.db is not None:
+            try:
+                from alibi.services.dedup import deduplicate_after_batch
+
+                deduplicate_after_batch(self.db)
+            except Exception as e:  # never let cleanup fail a batch
+                logger.warning(f"Post-batch dedup skipped: {e}")
 
         return results
 

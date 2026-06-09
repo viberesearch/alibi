@@ -35,7 +35,9 @@ class FactSummary(BaseModel):
     vendor: Optional[str] = None
     total_amount: Optional[float] = None
     currency: Optional[str] = None
+    country: Optional[str] = None
     event_date: Optional[str] = None
+    event_time: Optional[str] = None
     status: Optional[str] = None
     cloud_id: Optional[str] = None
 
@@ -132,6 +134,8 @@ class UpdateFactRequest(BaseModel):
     vendor: Optional[str] = None
     amount: Optional[str] = None
     date: Optional[str] = None
+    time: Optional[str] = None
+    country: Optional[str] = None
     fact_type: Optional[str] = None
     vendor_key: Optional[str] = None
 

@@ -785,11 +785,13 @@ INSERT INTO cloud_bundles (cloud_id, bundle_id, match_type)
 
         bus.emit(EventType.FACT_CREATED, {"document_id": "doc-sub"})
 
-        # Wait for background thread to complete enrichment
+        # Wait for the background thread to FINISH a pass. The worker writes the
+        # brand mid-pass but only bumps enrichment_count at the end, so polling
+        # on the brand value races the counter under load (flaky on slow CI).
+        # Wait on enrichment_count — the last thing set — instead.
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            row = db.fetchone("SELECT brand FROM fact_items WHERE id = 'fi-sub'")
-            if row and row["brand"] == "Ferrero" and sub.enrichment_count >= 1:
+            if sub.enrichment_count >= 1:
                 break
             time.sleep(0.05)
 

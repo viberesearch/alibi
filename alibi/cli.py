@@ -51,6 +51,13 @@ from alibi.commands.facts import facts
 cli.add_command(facts)
 
 # ---------------------------------------------------------------------------
+# Register groups from alibi.commands.items (item-as-star analytics)
+# ---------------------------------------------------------------------------
+from alibi.commands.items import items
+
+cli.add_command(items)
+
+# ---------------------------------------------------------------------------
 # Register groups from alibi.commands.enrich
 # ---------------------------------------------------------------------------
 from alibi.commands.enrich import enrich

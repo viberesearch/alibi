@@ -410,6 +410,7 @@ def extract_from_image(
                         ollama_url=ollama_url,
                         timeout=timeout,
                         emphasis_prompt=correction_prompt,
+                        enforce_schema=True,
                     )
                     extracted["_parser_confidence"] = parse_result.confidence
                     extracted["_pipeline"] = "three_stage"
@@ -456,6 +457,7 @@ def extract_from_image(
                 ollama_url=ollama_url,
                 timeout=timeout,
                 emphasis_prompt=emphasis,
+                enforce_schema=True,
             )
             verification_retry = verify_extraction(extracted_retry, ocr_text=ocr_text)
             logger.info(
@@ -501,7 +503,20 @@ def extract_from_image(
             f"LLM={t_llm - t_llm_start:.1f}s)"
         )
 
-        # If still very low confidence, fall back to vision
+        # Confidence/coverage-gated cloud escalation (hard-doc rescue). When
+        # the local result is low-confidence or the amount-line coverage check
+        # shows dropped items, re-read the image via the cloud vision model and
+        # keep whichever result scores better. Independent of the global Gemini
+        # toggle — this is the targeted escalation for rotated / faded / low-res
+        # docs the local pipeline cannot read correctly.
+        escalated = _maybe_escalate_to_cloud(
+            image_path, doc_type or "receipt", extracted, verification, ocr_text
+        )
+        if escalated is not extracted:
+            return escalated
+
+        # If still very low confidence and cloud didn't rescue it, fall back to
+        # vision (legacy local vision when no cloud key is configured).
         if verification.confidence < FALLBACK_THRESHOLD:
             logger.warning(
                 f"Two-stage confidence {verification.confidence:.2f} < "
@@ -719,6 +734,7 @@ def extract_from_images(
                     ollama_url=ollama_url,
                     timeout=timeout,
                     emphasis_prompt=correction_prompt,
+                    enforce_schema=True,
                 )
                 extracted["_parser_confidence"] = parse_result.confidence
                 extracted["_pipeline"] = "multi_image_three_stage"
@@ -753,6 +769,125 @@ def extract_from_images(
 # ------------------------------------------------------------------
 # Fallback vision: Gemini Vision (when enabled) or legacy Ollama
 # ------------------------------------------------------------------
+
+
+def _extraction_quality(extracted: dict[str, Any], ocr_text: str) -> float:
+    """Score an extraction for the local-vs-cloud keep-better decision.
+
+    Combines amount-line coverage (did we capture the priced rows the OCR
+    saw?) with reconciliation (does the item sum match the printed total?).
+    Higher is better. A 1-item extraction of a 15-item receipt scores low on
+    both axes; a complete, reconciling extraction scores high.
+    """
+    from alibi.extraction.item_verifier import count_amount_lines
+
+    items = extracted.get("line_items") or []
+    n = len(items)
+    score = 0.0
+
+    amount_lines = count_amount_lines(ocr_text or extracted.get("raw_text") or "")
+    if amount_lines:
+        score += min(n / amount_lines, 1.0) * 2.0
+    else:
+        score += min(n / 10.0, 1.0)
+
+    def _f(v: Any) -> float | None:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    total = _f(
+        extracted.get("total")
+        or extracted.get("amount")
+        or extracted.get("total_amount")
+    )
+    if total and n:
+        items_sum = sum((_f(it.get("total_price")) or 0.0) for it in items)
+        score += max(0.0, 1.0 - abs(items_sum - total) / abs(total)) * 3.0
+    return score
+
+
+def _maybe_escalate_to_cloud(
+    image_path: Path,
+    doc_type: str,
+    extracted: dict[str, Any],
+    verification: Any,
+    ocr_text: str,
+) -> dict[str, Any]:
+    """Re-read a hard document via the cloud vision model when local failed.
+
+    Triggers when verification confidence is below the configured threshold OR
+    the amount-line coverage check shows dropped items. Compares the cloud
+    result against the local one and returns whichever scores better. Returns
+    the original ``extracted`` object unchanged when escalation is disabled, no
+    key is configured, the result is already a cloud read, or the gate is not
+    met — so the caller can detect "no change" via identity.
+    """
+    config = get_config()
+    api_key = config.gemini_api_key
+    # Require a real string key — also guards against escalation firing under a
+    # generic mocked config in tests (where attributes are truthy MagicMocks).
+    if not config.gemini_escalation_enabled or not (
+        isinstance(api_key, str) and api_key
+    ):
+        return extracted
+    if "gemini" in str(extracted.get("_pipeline", "")):
+        return extracted  # already a cloud result — don't loop
+
+    from alibi.extraction.item_verifier import cross_validate_receipt
+
+    cv = cross_validate_receipt({**extracted, "raw_text": ocr_text})
+    coverage_drop = (
+        cv.needs_review
+        or cv.item_count_mismatch > 0
+        or any("amount line" in w.lower() for w in cv.warnings)
+    )
+    low_conf = verification.confidence < config.escalation_confidence_threshold
+    if not (low_conf or coverage_drop):
+        return extracted
+
+    logger.info(
+        "Cloud escalation for %s (confidence=%.2f, coverage_drop=%s)",
+        image_path.name,
+        verification.confidence,
+        coverage_drop,
+    )
+    try:
+        from alibi.extraction.gemini_structurer import extract_from_image_gemini
+
+        cloud = extract_from_image_gemini(str(image_path), doc_type=doc_type)
+    except Exception as e:
+        logger.warning("Cloud escalation failed for %s: %s", image_path.name, e)
+        return extracted
+
+    if not cloud.get("raw_text"):
+        cloud["raw_text"] = ocr_text
+
+    local_score = _extraction_quality(extracted, ocr_text)
+    cloud_score = _extraction_quality(cloud, ocr_text)
+    if cloud_score <= local_score:
+        logger.info(
+            "Cloud escalation kept LOCAL for %s (cloud %.2f <= local %.2f)",
+            image_path.name,
+            cloud_score,
+            local_score,
+        )
+        return extracted
+
+    from alibi.extraction.verification import verify_extraction
+
+    cloud_ver = verify_extraction(cloud, ocr_text=ocr_text)
+    cloud["_two_stage_confidence"] = cloud_ver.confidence
+    cloud["_escalated"] = True
+    cloud["_local_pipeline"] = extracted.get("_pipeline")
+    logger.info(
+        "Cloud escalation kept CLOUD for %s (cloud %.2f > local %.2f)",
+        image_path.name,
+        cloud_score,
+        local_score,
+    )
+    return cloud
 
 
 def _fallback_vision(

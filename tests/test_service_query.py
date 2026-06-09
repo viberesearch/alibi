@@ -652,6 +652,9 @@ class TestListFactItemsWithFact:
         assert str(row["event_date"]) == "2026-01-10"
         assert row["currency"] == "EUR"
         assert row["category"] == "bakery"
+        # Each item is self-describing along every filter axis (the "star").
+        for key in ("event_time", "country", "vendor_key"):
+            assert key in row
 
     def test_filter_by_category(self, db):
         self._setup_fact_with_items(
@@ -699,3 +702,182 @@ class TestListFactItemsWithFact:
         rows = query.list_fact_items_with_fact(db)
         names = [r["name"] for r in rows]
         assert names == ["Late", "Mid", "Early"]
+
+
+# ---------------------------------------------------------------------------
+# Item-as-star multi-axis filtering (A)
+# ---------------------------------------------------------------------------
+
+
+class TestItemStarFilters:
+    """Each fact_item is a 'star' filterable along every axis."""
+
+    @staticmethod
+    def _star(
+        db,
+        *,
+        name,
+        vendor="Shop",
+        currency="EUR",
+        country=None,
+        vendor_key=None,
+        brand=None,
+        category=None,
+        event_date=date(2026, 1, 15),
+        event_time=None,
+        total_price=Decimal("2.00"),
+    ):
+        doc = _make_doc(db, f"/test/{uuid4().hex}.jpg")
+        va = _make_vendor_atom(db, doc, vendor)
+        ia = _make_item_atom(db, doc, name)
+        bundle = _make_bundle(db, doc, [va, ia])
+        cloud = Cloud(id=str(uuid4()), status=CloudStatus.FORMING)
+        v2_store.store_cloud(
+            db,
+            cloud,
+            CloudBundle(
+                cloud_id=cloud.id,
+                bundle_id=bundle.id,
+                match_type=CloudMatchType.MANUAL,
+                match_confidence=Decimal("1.0"),
+            ),
+        )
+        fact = Fact(
+            id=str(uuid4()),
+            cloud_id=cloud.id,
+            fact_type=FactType.PURCHASE,
+            vendor=vendor,
+            vendor_key=vendor_key,
+            total_amount=Decimal("10"),
+            currency=currency,
+            country=country,
+            event_date=event_date,
+            event_time=event_time,
+            status=FactStatus.CONFIRMED,
+        )
+        fi = _make_fact_item(fact, ia, name)
+        fi.total_price = total_price
+        if brand:
+            fi.brand = brand
+        if category:
+            fi.category = category
+        v2_store.store_fact(db, fact, [fi])
+        return fact
+
+    def test_filter_by_currency(self, db):
+        self._star(db, name="Milk", currency="EUR")
+        self._star(db, name="Poutine", currency="CAD")
+        rows = query.list_fact_items_with_fact(db, filters={"currency": "CAD"})
+        assert [r["name"] for r in rows] == ["Poutine"]
+
+    def test_filter_by_country(self, db):
+        self._star(db, name="Halloumi", country="CY")
+        self._star(db, name="Schnitzel", country="AT")
+        rows = query.list_fact_items_with_fact(db, filters={"country": "AT"})
+        assert [r["name"] for r in rows] == ["Schnitzel"]
+
+    def test_filter_by_vendor_substring(self, db):
+        self._star(db, name="Bread", vendor="LIDL Cyprus")
+        self._star(db, name="Eggs", vendor="PAPAS")
+        rows = query.list_fact_items_with_fact(db, filters={"vendor": "lidl"})
+        assert [r["name"] for r in rows] == ["Bread"]
+
+    def test_filter_by_vendor_key(self, db):
+        self._star(db, name="X", vendor_key="CY123A")
+        self._star(db, name="Y", vendor_key="CY999Z")
+        rows = query.list_fact_items_with_fact(db, filters={"vendor_key": "CY123A"})
+        assert [r["name"] for r in rows] == ["X"]
+
+    def test_filter_by_brand(self, db):
+        self._star(db, name="Cola", brand="Coca-Cola")
+        self._star(db, name="Water", brand="Evian")
+        rows = query.list_fact_items_with_fact(db, filters={"brand": "coca"})
+        assert [r["name"] for r in rows] == ["Cola"]
+
+    def test_filter_by_price_range(self, db):
+        self._star(db, name="Cheap", total_price=Decimal("1.00"))
+        self._star(db, name="Pricey", total_price=Decimal("50.00"))
+        rows = query.list_fact_items_with_fact(db, filters={"price_min": 10})
+        assert [r["name"] for r in rows] == ["Pricey"]
+
+    def test_filter_by_datetime_range(self, db):
+        self._star(
+            db, name="Morning", event_date=date(2026, 1, 2), event_time="08:30:00"
+        )
+        self._star(
+            db, name="Evening", event_date=date(2026, 1, 2), event_time="19:45:00"
+        )
+        rows = query.list_fact_items_with_fact(
+            db,
+            filters={
+                "datetime_from": "2026-01-02 12:00:00",
+                "datetime_to": "2026-01-02 23:59:59",
+            },
+        )
+        assert [r["name"] for r in rows] == ["Evening"]
+
+    def test_combined_filters(self, db):
+        self._star(
+            db, name="Target", vendor="LIDL", country="CY", total_price=Decimal("3.00")
+        )
+        self._star(
+            db, name="Other", vendor="LIDL", country="CA", total_price=Decimal("3.00")
+        )
+        rows = query.list_fact_items_with_fact(
+            db, filters={"vendor": "lidl", "country": "CY", "price_max": 5}
+        )
+        assert [r["name"] for r in rows] == ["Target"]
+
+
+class TestCategoryPathFilter:
+    """The A filter's hierarchical category_path prefix axis (task B)."""
+
+    @staticmethod
+    def _star_with_path(db, name, category_path):
+        from alibi.services.correction import update_fact_item
+
+        TestItemStarFilters._star(db, name=name)
+        item_id = db.fetchone("SELECT id FROM fact_items WHERE name = ?", (name,))["id"]
+        update_fact_item(db, item_id, {"category_path": category_path})
+        return item_id
+
+    def test_prefix_matches_everything_under_node(self, db):
+        self._star_with_path(db, "Milk", "food > dairy > milk")
+        self._star_with_path(db, "Carrots", "food > produce > vegetables")
+        self._star_with_path(db, "Soap", "household")
+        rows = query.list_fact_items_with_fact(db, filters={"category_path": "food"})
+        assert sorted(r["name"] for r in rows) == ["Carrots", "Milk"]
+
+    def test_prefix_matches_deeper_node(self, db):
+        self._star_with_path(db, "Milk", "food > dairy > milk")
+        self._star_with_path(db, "Cheese", "food > dairy > cheese")
+        self._star_with_path(db, "Carrots", "food > produce > vegetables")
+        rows = query.list_fact_items_with_fact(
+            db, filters={"category_path": "food > dairy"}
+        )
+        assert sorted(r["name"] for r in rows) == ["Cheese", "Milk"]
+
+    def test_exact_leaf_node_matches_itself(self, db):
+        self._star_with_path(db, "Soap", "household")
+        self._star_with_path(db, "Milk", "food > dairy > milk")
+        rows = query.list_fact_items_with_fact(
+            db, filters={"category_path": "household"}
+        )
+        assert [r["name"] for r in rows] == ["Soap"]
+
+    def test_prefix_is_case_insensitive(self, db):
+        self._star_with_path(db, "Milk", "food > dairy > milk")
+        rows = query.list_fact_items_with_fact(db, filters={"category_path": "FOOD"})
+        assert [r["name"] for r in rows] == ["Milk"]
+
+    def test_node_prefix_does_not_match_sibling(self, db):
+        # "food" must not match "foodservice" — separator-aware boundary.
+        self._star_with_path(db, "Milk", "food > dairy > milk")
+        self._star_with_path(db, "Catering", "services > telecom")
+        rows = query.list_fact_items_with_fact(db, filters={"category_path": "food"})
+        assert [r["name"] for r in rows] == ["Milk"]
+
+    def test_category_path_in_output_row(self, db):
+        self._star_with_path(db, "Milk", "food > dairy > milk")
+        rows = query.list_fact_items_with_fact(db, filters={"name": "Milk"})
+        assert rows[0]["category_path"] == "food > dairy > milk"

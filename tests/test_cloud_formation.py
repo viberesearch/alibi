@@ -22,6 +22,8 @@ from alibi.clouds.formation import (
     _amount_score,
     _date_score,
     _item_overlap_score,
+    _score_match,
+    _time_conflict,
     _vendor_score,
     add_bundle_to_cloud,
     create_cloud_for_bundle,
@@ -953,3 +955,93 @@ class TestExtractBundleSummaryLegalName:
         assert s.vendor == "PAPAS"
         assert s.vendor_legal_name is None
         assert s.vendor_legal_normalized is None
+
+
+# ---------------------------------------------------------------------------
+# Time-aware clustering guard
+# ---------------------------------------------------------------------------
+
+
+def _basket(
+    bid,
+    time_str,
+    vendor="lidlcyprus",
+    amount="85.10",
+    d="2025-12-29",
+    btype=BundleType.BASKET,
+):
+    return BundleSummary(
+        bundle_id=bid,
+        bundle_type=btype,
+        vendor=vendor,
+        vendor_normalized=vendor,
+        amount=Decimal(amount),
+        event_date=date.fromisoformat(d),
+        event_time=time_str,
+    )
+
+
+class TestTimeConflict:
+    def test_same_type_different_times_conflict(self) -> None:
+        # Two LIDL baskets, same day/amount, 6+ hours apart -> different txns.
+        a = _basket("a", "12:08:35")
+        b = _basket("b", "18:37:49")
+        assert _time_conflict(a, b)
+
+    def test_same_type_few_minutes_apart_conflict(self) -> None:
+        # Spouses at separate tills, 5 min apart -> distinct transactions.
+        a = _basket("a", "12:08:00")
+        b = _basket("b", "12:13:00")
+        assert _time_conflict(a, b)
+
+    def test_same_type_same_time_no_conflict(self) -> None:
+        # Same physical receipt re-scanned -> same time, may merge.
+        a = _basket("a", "12:08:35")
+        b = _basket("b", "12:08:35")
+        assert not _time_conflict(a, b)
+
+    def test_cross_type_few_minutes_no_conflict(self) -> None:
+        # Receipt + its card slip a few minutes apart -> same transaction.
+        a = _basket("a", "12:08:00", btype=BundleType.BASKET)
+        b = _basket("b", "12:12:00", btype=BundleType.PAYMENT_RECORD)
+        assert not _time_conflict(a, b)
+
+    def test_missing_time_no_conflict(self) -> None:
+        a = _basket("a", None)
+        b = _basket("b", "12:08:35")
+        assert not _time_conflict(a, b)
+
+    def test_different_dates_no_conflict(self) -> None:
+        a = _basket("a", "12:08:00", d="2025-12-29")
+        b = _basket("b", "12:08:00", d="2025-12-30")
+        assert not _time_conflict(a, b)
+
+
+class TestScoreMatchTimeGuard:
+    def test_different_times_block_merge(self) -> None:
+        a = _basket("a", "12:08:35")
+        b = _basket("b", "18:37:49")
+        score, _ = _score_match(a, b)
+        assert score == Decimal("0")
+
+    def test_same_time_allows_merge(self) -> None:
+        a = _basket("a", "12:08:35")
+        b = _basket("b", "12:08:35")
+        score, _ = _score_match(a, b)
+        assert score > Decimal("0.5")
+
+
+class TestExtractBundleSummaryTime:
+    def test_parses_event_time(self) -> None:
+        atoms = [
+            {"atom_type": "datetime", "data": {"value": "2025-12-29 18:37:49"}},
+        ]
+        s = extract_bundle_summary("b1", BundleType.BASKET, atoms)
+        assert s.event_date == date.fromisoformat("2025-12-29")
+        assert s.event_time == "18:37:49"
+
+    def test_date_only_no_time(self) -> None:
+        atoms = [{"atom_type": "datetime", "data": {"value": "2025-12-29"}}]
+        s = extract_bundle_summary("b1", BundleType.BASKET, atoms)
+        assert s.event_date == date.fromisoformat("2025-12-29")
+        assert s.event_time is None

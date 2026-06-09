@@ -16,6 +16,24 @@ def enrich() -> None:
     pass
 
 
+def _refresh_item_analytics(db: DatabaseManager, item_ids: list[str]) -> None:
+    """Re-materialise the item_stars analytics mirror for the given items.
+
+    The local enrichment passes write comparable_name / unit / attributes /
+    category straight to fact_items. Without this refresh the item_stars
+    surface (``lt items ...``, the analytics API/Web) would read stale values
+    until a manual ``lt items rebuild``. Refreshes only the affected facts
+    (deduplicated), so it is cheap and idempotent.
+    """
+    if not item_ids:
+        return
+    from alibi.services import refresh_item_stars_for_items
+
+    facts = refresh_item_stars_for_items(db, item_ids)
+    if facts:
+        console.print(f"[dim]Refreshed item analytics ({facts} fact(s)).[/dim]")
+
+
 @enrich.command("pending")
 @click.option(
     "--limit",
@@ -52,6 +70,535 @@ def enrich_pending(limit: int) -> None:
             console.print(
                 f"[yellow]{failed} barcode(s) not found in Open Food Facts.[/yellow]"
             )
+
+
+@enrich.command("all")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to process",
+)
+@click.option(
+    "--no-fallback",
+    is_flag=True,
+    default=False,
+    help="Skip the single-field fallback passes that mop up dropped fields",
+)
+def enrich_all(limit: int, no_fallback: bool) -> None:
+    """Enrich unit + comparable_name + category + attributes in ONE LLM call/batch.
+
+    The combined local-first pass that replaces running `units`,
+    `comparable-names`, `categorize` and `attributes` separately: it batches
+    items missing any of those fields by vendor and asks the local model for all
+    four at once, cutting LLM round-trips ~4x. Each field is written/marked only
+    for the rows that needed it, so existing values are never overwritten.
+
+    Unless --no-fallback is given, the four single-field passes run afterwards to
+    pick up any field the combined model dropped (cheap: the bulk is already
+    marked). Re-runnable (idempotent); run `lt items rebuild` afterwards.
+    """
+    from alibi.enrichment.attributes import enrich_pending_attributes
+    from alibi.enrichment.categorize import enrich_pending_categories
+    from alibi.enrichment.combined import enrich_pending_combined
+    from alibi.enrichment.comparable_names import enrich_pending_comparable_names
+    from alibi.enrichment.units import enrich_pending_units
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Combined-enriching up to {limit} items...[/dim]")
+    results = enrich_pending_combined(db, limit=limit)
+
+    changed_ids: set[str] = {r.item_id for r in results if r.changed}
+    if not results:
+        console.print("[dim]No items need enrichment.[/dim]")
+    else:
+        units = sum(1 for r in results if r.unit_set)
+        names = sum(1 for r in results if r.comparable_name_set)
+        cats = sum(1 for r in results if r.category_set)
+        attrs = sum(1 for r in results if r.attributes_set)
+        console.print(
+            f"[green]Combined-enriched {len(changed_ids)}/{len(results)} item(s):"
+            f"[/green] {units} unit, {names} name, {cats} category, {attrs} attrs."
+        )
+
+    if not no_fallback:
+        console.print("[dim]Running single-field fallbacks for dropped fields...[/dim]")
+        for label, fn in (
+            ("units", enrich_pending_units),
+            ("comparable-names", enrich_pending_comparable_names),
+            ("categorize", enrich_pending_categories),
+            ("attributes", enrich_pending_attributes),
+        ):
+            fb = fn(db, limit=limit)
+            mopped = [
+                r.item_id
+                for r in fb
+                if getattr(r, "success", getattr(r, "changed", False))
+            ]
+            if mopped:
+                console.print(f"  [dim]{label}: +{len(mopped)} item(s).[/dim]")
+                changed_ids.update(mopped)
+
+    _refresh_item_analytics(db, list(changed_ids))
+
+
+@enrich.command("categorize")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to categorize",
+)
+def enrich_categorize(limit: int) -> None:
+    """Assign a hierarchical category_path to fact items that lack one.
+
+    A decoupled LLM pass: batches items without a category_path, prompts the
+    local structuring model against the controlled taxonomy, and writes back
+    the path plus its leaf into the flat category. Re-runnable (idempotent).
+    """
+    from alibi.enrichment.categorize import enrich_pending_categories
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Categorizing up to {limit} items...[/dim]")
+    results = enrich_pending_categories(db, limit=limit)
+
+    success = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+
+    if not results:
+        console.print("[dim]No items need categorization.[/dim]")
+        return
+    if success:
+        console.print(f"[green]Categorized {success} item(s).[/green]")
+    if failed:
+        console.print(f"[yellow]{failed} item(s) could not be categorized.[/yellow]")
+    _refresh_item_analytics(db, [r.item_id for r in results if r.success])
+
+
+@enrich.command("comparable-names")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to process",
+)
+def enrich_comparable_names(limit: int) -> None:
+    """Fill comparable_name (generic English product name) on items lacking one.
+
+    A decoupled, local-first LLM pass: batches items without a comparable_name,
+    prompts the local structuring model for a brand-stripped generic product
+    name, and writes it back. Re-runnable (idempotent); non-product lines are
+    left NULL. Cloud counterpart for stragglers: `lt enrich normalize-names`.
+    Run `lt items rebuild` afterwards to sync the item_stars analytics mirror.
+    """
+    from alibi.enrichment.comparable_names import enrich_pending_comparable_names
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Naming up to {limit} items...[/dim]")
+    results = enrich_pending_comparable_names(db, limit=limit)
+
+    success = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+
+    if not results:
+        console.print("[dim]No items need a comparable_name.[/dim]")
+        return
+    if success:
+        console.print(f"[green]Named {success} item(s).[/green]")
+    if failed:
+        console.print(
+            f"[yellow]{failed} item(s) left unnamed (non-product or failed).[/yellow]"
+        )
+    _refresh_item_analytics(db, [r.item_id for r in results if r.success])
+
+
+@enrich.command("states")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to process",
+)
+def enrich_states(limit: int) -> None:
+    """Assign a controlled product STATE (fresh/canned/cured/...) into attributes.
+
+    A decoupled, local-first LLM pass that fills the ``state`` facet: the single
+    preservation/preparation form that makes the same food a different product for
+    comparison (fresh vs canned artichokes, raw vs roasted cashews, fresh vs
+    smoked salmon). comparable_unit already separates volume/weight/count; state
+    is the within-form discriminator the unit can't express. Closed vocabulary
+    (fresh, frozen, canned, dried, cured, pickled, roasted, cooked); items with no
+    applicable state (dry staples, drinks, non-food) get none. Re-runnable
+    (idempotent). Run after the attributes pass; `lt items rebuild` syncs the
+    analytics mirror.
+    """
+    from alibi.enrichment.product_state import enrich_pending_states
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Stating up to {limit} items...[/dim]")
+    results = enrich_pending_states(db, limit=limit)
+
+    success = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+
+    if not results:
+        console.print("[dim]No items need a product state.[/dim]")
+        return
+    if success:
+        console.print(f"[green]Stated {success} item(s).[/green]")
+    if failed:
+        console.print(
+            f"[yellow]{failed} item(s) left stateless (no applicable state or "
+            f"failed).[/yellow]"
+        )
+    _refresh_item_analytics(db, [r.item_id for r in results if r.success])
+
+
+@enrich.command("tidy-comparable-names")
+@click.option(
+    "--limit",
+    "-l",
+    default=None,
+    type=int,
+    help="Max rows to scan (default: all)",
+)
+def enrich_tidy_comparable_names(limit: int | None) -> None:
+    """Strip leftover size/pack/percentage tokens from comparable_names.
+
+    A deterministic, local, no-LLM cleanup that rewrites values the structuring
+    prompt was meant to strip but didn't ("olive oil 2l" -> "olive oil",
+    "cottage cheese 9%" -> "cottage cheese", "eggs large x12" -> "eggs large").
+    The size/fat/count already live in unit_quantity/attributes, so nothing is
+    lost — variants of one product just collapse into a single comparison
+    bucket. Idempotent. Run `lt items rebuild` afterwards to sync item_stars.
+    """
+    from alibi.enrichment.comparable_names import retidy_comparable_names
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print("[dim]Tidying stored comparable_names...[/dim]")
+    changes = retidy_comparable_names(db, limit=limit)
+
+    if not changes:
+        console.print("[dim]Nothing to tidy — all comparable_names are clean.[/dim]")
+        return
+    for ch in changes[:50]:
+        console.print(f"  [yellow]{ch.before}[/yellow] -> [green]{ch.after}[/green]")
+    if len(changes) > 50:
+        console.print(f"  [dim]... and {len(changes) - 50} more[/dim]")
+    console.print(f"[green]Tidied {len(changes)} comparable_name(s).[/green]")
+    _refresh_item_analytics(db, [c.item_id for c in changes])
+
+
+@enrich.command("propose-name-merges")
+@click.option(
+    "--threshold",
+    "-t",
+    default=None,
+    type=float,
+    help="Cosine similarity to cluster at (default: 0.92, conservative).",
+)
+@click.option(
+    "--output",
+    "-o",
+    default="data/_name_merge_proposals.yaml",
+    show_default=True,
+    help="Where to write the review file.",
+)
+def enrich_propose_name_merges(threshold: float | None, output: str) -> None:
+    """Propose embedding-based comparable_name merges for human review.
+
+    The semantic counterpart to ``tidy-comparable-names``: that strips size/pack
+    tokens deterministically, this finds synonyms, singular/plural, translations
+    and OCR garble ("artichoke" vs "artichokes") by embedding each distinct
+    comparable_name and clustering near-duplicates WITHIN the same comparable_unit
+    above a high cosine threshold. It writes a review file and changes NO data.
+    Review it (set ``approved: true`` on clusters you want), then run
+    ``lt enrich apply-name-merges --file <output>``.
+    """
+    import datetime
+    from pathlib import Path
+
+    from alibi.enrichment.comparable_name_clusters import (
+        DEFAULT_THRESHOLD,
+        propose_name_merges,
+        write_proposal_yaml,
+    )
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    thr = DEFAULT_THRESHOLD if threshold is None else threshold
+    console.print(
+        f"[dim]Embedding distinct comparable_names and clustering at "
+        f"cosine >= {thr}...[/dim]"
+    )
+    clusters = propose_name_merges(db, threshold=thr)
+    if not clusters:
+        console.print(
+            "[dim]No merge candidates found at this threshold — nothing to "
+            "review.[/dim]"
+        )
+        return
+
+    out_path = Path(output)
+    write_proposal_yaml(
+        clusters,
+        out_path,
+        threshold=thr,
+        generated=datetime.date.today().isoformat(),
+    )
+    variants = sum(len(c.variant_names()) for c in clusters)
+    for c in clusters[:25]:
+        joined = ", ".join(c.variant_names())
+        console.print(
+            f"  [cyan]{c.canonical}[/cyan] [dim]({c.comparable_unit or 'unitless'})"
+            f"[/dim] <- [yellow]{joined}[/yellow]"
+        )
+    if len(clusters) > 25:
+        console.print(f"  [dim]... and {len(clusters) - 25} more clusters[/dim]")
+    console.print(
+        f"[green]Proposed {len(clusters)} cluster(s) "
+        f"({variants} variant name(s) to merge).[/green]"
+    )
+    console.print(
+        f"[bold]Review[/bold] {out_path} (set [cyan]approved: true[/cyan]), then "
+        f"run [bold]lt enrich apply-name-merges --file {out_path}[/bold]."
+    )
+
+
+@enrich.command("apply-name-merges")
+@click.option(
+    "--file",
+    "-f",
+    "proposal_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="The reviewed proposal file (clusters marked approved: true).",
+)
+def enrich_apply_name_merges(proposal_file: str) -> None:
+    """Apply approved comparable_name merges from a reviewed proposal file.
+
+    Reads the file written by ``propose-name-merges``, applies ONLY clusters
+    marked ``approved: true`` (rewriting every member name to its canonical,
+    matched within the same unit), then rebuilds the item_stars analytics mirror.
+    A timestamped DB backup (``alibi.db.bak_prenamecluster``) is taken before any
+    write, and an apply log is recorded under ``data/``.
+    """
+    import datetime
+    import json
+    import shutil
+    from pathlib import Path
+
+    from alibi.enrichment.comparable_name_clusters import (
+        apply_name_merges,
+        load_approved_clusters,
+    )
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    try:
+        clusters = load_approved_clusters(Path(proposal_file))
+    except ValueError as exc:
+        console.print(f"[red]Malformed proposal file: {exc}[/red]")
+        return
+
+    if not clusters:
+        console.print(
+            "[yellow]No approved clusters (set [cyan]approved: true[/cyan] on the "
+            "ones you want).[/yellow]"
+        )
+        return
+
+    cfg = get_config()
+    db_path = cfg.get_absolute_db_path()
+    backup = db_path.with_suffix(db_path.suffix + ".bak_prenamecluster")
+    shutil.copy2(db_path, backup)
+    console.print(f"[dim]Backed up DB -> {backup}[/dim]")
+
+    result = apply_name_merges(db, clusters)
+
+    for r in result.rewrites:
+        console.print(
+            f"  [yellow]{r.old_name}[/yellow] -> [green]{r.new_name}[/green] "
+            f"[dim]({r.comparable_unit or 'unitless'}, {r.rows} row(s))[/dim]"
+        )
+    console.print(
+        f"[green]Merged {len(result.rewrites)} variant(s) "
+        f"({result.rewritten_rows} fact_item row(s)); "
+        f"rebuilt item_stars: {result.rebuilt_stars} rows.[/green]"
+    )
+
+    log = {
+        "applied_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "proposal_file": str(proposal_file),
+        "backup": str(backup),
+        "approved_clusters": len(clusters),
+        "rewrites": [
+            {
+                "old": r.old_name,
+                "new": r.new_name,
+                "unit": r.comparable_unit,
+                "rows": r.rows,
+            }
+            for r in result.rewrites
+        ],
+        "rebuilt_stars": result.rebuilt_stars,
+    }
+    stamp = datetime.date.today().strftime("%Y%m%d")
+    log_path = Path(f"data/_name_merge_apply_log_{stamp}.json")
+    log_path.write_text(json.dumps(log, indent=1), encoding="utf-8")
+    console.print(f"[dim]Apply log -> {log_path}[/dim]")
+
+
+@enrich.command("comparable-prices")
+@click.option(
+    "--limit",
+    "-l",
+    default=2000,
+    show_default=True,
+    help="Max items to scan",
+)
+def enrich_comparable_prices(limit: int) -> None:
+    """Recompute comparable_unit_price for items stuck on pcs/NULL.
+
+    A deterministic (no-LLM) pass: re-parses the package size from each item's
+    name (e.g. "OLIVE OIL 2L", "PASTA 450G") and recomputes the normalised
+    EUR/L or EUR/kg price via the canonical formula. Items with no parseable
+    size are left as-is (genuine count items stay pcs). Idempotent; writes only
+    rows that change. Run `lt items rebuild` afterwards to sync item analytics.
+    """
+    from alibi.enrichment.comparable_prices import (
+        recompute_pending_comparable_prices,
+    )
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Scanning up to {limit} items...[/dim]")
+    results = recompute_pending_comparable_prices(db, limit=limit)
+
+    changed = sum(1 for r in results if r.changed)
+    if not results:
+        console.print("[dim]No items need a comparable-price recompute.[/dim]")
+        return
+    if changed:
+        console.print(f"[green]Recomputed {changed} item(s).[/green]")
+    else:
+        console.print("[dim]Scanned; nothing needed changing.[/dim]")
+    _refresh_item_analytics(db, [r.item_id for r in results if r.changed])
+
+
+@enrich.command("units")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to process",
+)
+def enrich_units(limit: int) -> None:
+    """Read unit + unit_quantity from item names for items that lack them.
+
+    A decoupled, local-first LLM pass: for fact_items with a NULL unit_quantity,
+    prompts the local model to read the package size out of the stored name
+    (e.g. "PASTA 450G" -> g/450, "TOM.PASTE 4X70G" -> g/280), then writes back
+    unit/unit_quantity and recomputes comparable_unit_price. No re-OCR. Genuine
+    count / non-product lines are left untouched. Re-runnable (idempotent).
+    Cloud-free; run `lt items rebuild` afterwards to sync item analytics.
+    """
+    from alibi.enrichment.units import enrich_pending_units
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Reading sizes from up to {limit} item names...[/dim]")
+    results = enrich_pending_units(db, limit=limit)
+
+    success = sum(1 for r in results if r.success)
+    failed = sum(1 for r in results if not r.success)
+
+    if not results:
+        console.print("[dim]No items need unit extraction.[/dim]")
+        return
+    if success:
+        console.print(f"[green]Sized {success} item(s).[/green]")
+    if failed:
+        console.print(
+            f"[yellow]{failed} item(s) left unsized (no size in name).[/yellow]"
+        )
+    _refresh_item_analytics(db, [r.item_id for r in results if r.success])
+
+
+@enrich.command("attributes")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to process",
+)
+def enrich_attributes(limit: int) -> None:
+    """Extract flexible product attributes (size, organic, fat %, ...) from names.
+
+    A decoupled, local-first LLM pass: for fact_items without an attributes map,
+    reads whatever facets are stated in the name into a JSON map (e.g. eggs ->
+    {"size":"L","organic":true,"free_range":true}), so any facet is filterable.
+    Also captures counted-pack sizes (eggs 6/12/30 -> per-piece price). Genuine
+    no-facet items get an empty map. Re-runnable; run `lt items rebuild` after.
+    """
+    from alibi.enrichment.attributes import enrich_pending_attributes
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Reading attributes from up to {limit} item names...[/dim]")
+    results = enrich_pending_attributes(db, limit=limit)
+
+    if not results:
+        console.print("[dim]No items need attribute extraction.[/dim]")
+        return
+    with_facets = sum(1 for r in results if r.attributes)
+    with_count = sum(1 for r in results if r.pack_count)
+    console.print(
+        f"[green]Processed {len(results)} item(s): "
+        f"{with_facets} with facets, {with_count} counted-pack(s).[/green]"
+    )
+    _refresh_item_analytics(db, [r.item_id for r in results if r.changed])
 
 
 @enrich.command("barcode")

@@ -114,6 +114,8 @@ Rules:
 - quantity is the count of items purchased (e.g. 2 cans, 1 bag). unit_quantity is the measurement per item (e.g. 400 for a "400g can", 0.76 for "0.76 kg lemons").
 - WEIGHED ITEMS: For items sold by weight, quantity is 1 (one purchase) and unit_quantity is the measured weight. Example: "0,250Kg x 5.56 = 1.39" → quantity=1, unit_raw="Kg", unit_quantity=0.250, unit_price=1.39, total_price=1.39. Another example: "1.29 kg PATATES 2.89" → name="PATATES", quantity=1, unit_raw="kg", unit_quantity=1.29, total_price=2.89. Do NOT put the weight in the item name. Do NOT set unit_quantity to conversion factors (e.g. 1000 for kg→g).
 - PACKAGED ITEMS WITH WEIGHT IN NAME: If a product name ends in a bare number like "Frozen Blueberries 500" or "Basmati Rice 1000", this typically means grams. Extract unit_raw as "g" and unit_quantity as the number (500, 1000). Same for "ml" volumes (e.g. "Orange Juice 330" means 330ml).
+- EMBEDDED SIZE TOKEN: If a name contains a size like "450G", "1L", "720ML", "1,5L", "250 g" or "200G/GOUDA" (a number with a weight/volume unit g, kg, ml or l, possibly mid-name or before a "/" translation), extract unit_raw as that unit and unit_quantity as that number, and drop the size token from the name. Do NOT leave such items as pcs. Examples: "PASTA 450G" → name="PASTA", unit_raw="g", unit_quantity=450. "CALABRIA OLIVE OIL 2L" → name="CALABRIA OLIVE OIL", unit_raw="l", unit_quantity=2.
+- MULTIPACKS "N x M<unit>": e.g. "TOM.PASTE 4X70G" or "WATER 6X1,5L" means N units of M each. Set unit_raw to the unit and unit_quantity to the TOTAL content N*M (4X70G → unit_quantity=280; 6X1,5L → unit_quantity=9), with quantity=1 for one pack purchased. (A bare "X12" with no unit is a count of 12, not a size.)
 - Ensure total_price = quantity * unit_price where possible.
 - unit_price MUST be the VAT-inclusive (gross) price as printed on the receipt. Never back-calculate net (ex-VAT) prices from the VAT rate.
 - Include ALL line items, even if some fields are missing."""
@@ -583,6 +585,13 @@ Rules:
 - WEIGHED ITEMS: For items sold by weight, quantity is 1 and unit_quantity is the measured weight.
 - PACKAGED ITEMS WITH WEIGHT IN NAME: If a product name ends in a bare number like
   "Frozen Blueberries 500", this typically means grams.
+- EMBEDDED SIZE TOKEN: If a name contains a size like "450G", "1L", "720ML", "1,5L"
+  or "200G/GOUDA" (a number with a weight/volume unit g, kg, ml or l), set unit_raw
+  to that unit and unit_quantity to that number, and drop the size from the name.
+  Do NOT leave such items as pcs. E.g. "PASTA 450G" → unit_raw="g", unit_quantity=450;
+  "OLIVE OIL 2L" → unit_raw="l", unit_quantity=2.
+- MULTIPACKS "N x M<unit>" (e.g. "TOM.PASTE 4X70G", "WATER 6X1,5L"): N units of M each
+  → unit_raw=the unit, unit_quantity=TOTAL N*M (4X70G → 280; 6X1,5L → 9), quantity=1.
 - For statements: transactions[] should list each line. line_items[] should be empty.
 - For receipts/invoices: line_items[] should list items. transactions[] should be empty.
 - For payment confirmations: focus on payment fields. line_items[] empty unless items shown.

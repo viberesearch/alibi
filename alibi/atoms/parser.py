@@ -421,6 +421,12 @@ def _parse_vendor_atom(document_id: str, raw: dict[str, Any]) -> Atom | None:
     if tax_id:
         data["tax_id"] = str(tax_id).strip().replace(" ", "")
 
+    # Jurisdiction (inferred upstream by apply_jurisdiction): carried on the
+    # vendor atom so collapse can stamp it onto the Fact.
+    country = raw.get("country")
+    if country:
+        data["country"] = str(country).strip()
+
     return Atom(
         id=str(uuid4()),
         document_id=document_id,

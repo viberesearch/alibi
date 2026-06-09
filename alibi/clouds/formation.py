@@ -72,6 +72,15 @@ _DATE_TOLERANCE: dict[tuple[BundleType, BundleType], int] = {
 }
 _DEFAULT_DATE_TOLERANCE = 3  # days
 
+# Time-conflict tolerances (minutes), used only when both bundles carry a time
+# on the SAME calendar day. Same-type pairs (two receipts) should merge only
+# when they are the same physical document re-scanned -> near-identical time;
+# two same-venue purchases minutes apart (e.g. spouses at separate tills) are
+# DISTINCT transactions. Cross-type pairs (receipt + its card slip) print a few
+# minutes apart for one transaction, so they get a wider window.
+_SAME_TYPE_TIME_TOLERANCE_MIN = 2
+_CROSS_TYPE_TIME_TOLERANCE_MIN = 20
+
 
 # Confidence thresholds
 _VENDOR_MATCH_CONFIDENCE = Decimal("0.3")
@@ -99,6 +108,7 @@ class BundleSummary:
     vendor_legal_normalized: str | None = None
     amount: Decimal | None = None
     event_date: date | None = None
+    event_time: str | None = None  # HH:MM:SS, if printed
     currency: str = "EUR"
     item_names: list[str] = field(default_factory=list)
     cloud_id: str | None = None  # Already assigned cloud
@@ -259,12 +269,16 @@ def extract_bundle_summary(
 
         elif atype == AtomType.DATETIME.value or atype == AtomType.DATETIME:
             date_str = data.get("value", "")
-            # Take just the date portion (YYYY-MM-DD)
+            # Take the date portion (YYYY-MM-DD); keep the time if present.
             if date_str and len(date_str) >= 10:
                 try:
                     summary.event_date = date.fromisoformat(date_str[:10])
                 except ValueError:
                     pass
+                if len(date_str) > 10:
+                    t = str(date_str)[10:].strip()
+                    if t:
+                        summary.event_time = t
 
         elif atype == AtomType.ITEM.value or atype == AtomType.ITEM:
             name = data.get("name")
@@ -326,6 +340,10 @@ def _score_match(
     """
     score = Decimal("0")
     match_type = CloudMatchType.VENDOR_DATE
+
+    # Same-day, times too far apart -> different transactions, never merge.
+    if _time_conflict(new, existing):
+        return Decimal("0"), CloudMatchType.VENDOR_DATE
 
     # Check for known false-positive pair (early exit)
     if db is not None and new.vendor_key and existing.vendor_key:
@@ -459,6 +477,40 @@ def _amount_score(
         return Decimal("0.8"), CloudMatchType.NEAR_AMOUNT
 
     return Decimal("0"), None
+
+
+def _parse_hhmm(t: str) -> int | None:
+    """Minutes-since-midnight from an 'HH:MM[:SS]' string, or None."""
+    parts = t.strip().split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except ValueError:
+        return None
+
+
+def _time_conflict(a: BundleSummary, b: BundleSummary) -> bool:
+    """True if two same-day bundles have times too far apart to be the same
+    transaction. Same-type pairs use a tight tolerance (only a re-scan of the
+    one receipt merges); cross-type pairs (receipt + card slip) a wider one.
+
+    Returns False when either time is missing or the dates differ (the date
+    logic handles those) — so this only ever *blocks* a merge, never forces one.
+    """
+    if a.event_date is None or b.event_date is None or a.event_date != b.event_date:
+        return False
+    if not a.event_time or not b.event_time:
+        return False
+    ma, mb = _parse_hhmm(a.event_time), _parse_hhmm(b.event_time)
+    if ma is None or mb is None:
+        return False
+    tol = (
+        _SAME_TYPE_TIME_TOLERANCE_MIN
+        if a.bundle_type == b.bundle_type
+        else _CROSS_TYPE_TIME_TOLERANCE_MIN
+    )
+    return abs(ma - mb) > tol
 
 
 def _date_score(a: BundleSummary, b: BundleSummary) -> Decimal:

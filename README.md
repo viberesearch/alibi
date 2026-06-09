@@ -15,7 +15,7 @@ Alibi does more:
 - **Product variants**: tracks that 3% milk differs from 1.5%, L eggs from M eggs, organic from conventional -- at the schema level, not as free text
 - **Price factor analysis**: discovers *why* prices differ (brand premium, organic markup, vendor pricing) from your data
 - **Vendor intelligence**: VAT-based identity resolution, POS system signature detection (16 systems), template learning per vendor
-- **Privacy controls**: 4-tier data masking (public/private/trusted/secret) and 3-level anonymization export (categories-only, pseudonymized, statistical)
+- **Privacy controls**: 5-tier data masking (T0-T4, fully masked to full detail) and 3-level anonymization export (categories-only, pseudonymized, statistical)
 - **Product enrichment**: 8-tier cascade from Open Food Facts to Gemini, with provenance tracking and optional contribution back to OFF
 - **Adaptive learning**: gets smarter with every correction -- templates, categories, vendor defaults, extraction quality self-diagnostics
 - **Local-first**: Ollama (glm-ocr 1.1B) for OCR, heuristic parser handles 64% of documents without any LLM
@@ -83,8 +83,8 @@ uv sync --extra all
 # Pull the OCR model
 ollama pull glm-ocr
 
-# Optional: pull the local LLM for Stage 3 correction
-ollama pull qwen3.5:9b
+# Optional: pull the local LLM for Stage 3 structuring + local enrichment
+ollama pull gemma4:12b
 ```
 
 ### Configure
@@ -125,12 +125,12 @@ Service Layer (alibi/services/ — 13 facades, ~88 functions)
   +---> Extraction Pipeline (3-stage hybrid)
   |       Stage 1: OCR (glm-ocr, local, 1.5-6s)
   |       Stage 2: Heuristic parser (~2ms, handles 64% of docs)
-  |       Stage 3: LLM correction (local qwen3.5:9b OR cloud Gemini 3.5 Flash)
+  |       Stage 3: LLM structuring (local gemma4:12b OR cloud Gemini 3.5 Flash)
   |
   +---> Atom-Cloud-Fact Pipeline
   |       atoms/parser -> clouds/formation -> clouds/collapse
   |
-  +---> SQLite (schema v33, 20 tables + FTS5 index)
+  +---> SQLite (schema v44, 23+ tables + FTS5 index)
   |
   +---> Event Bus -> Obsidian notes, webhooks, analytics export
 ```
@@ -144,7 +144,7 @@ The extraction pipeline's Stage 3 (LLM correction) supports two backends:
 
 | | Local (Ollama) | Cloud (Gemini) |
 |---|---|---|
-| Model | qwen3.5:9b | Gemini 3.5 Flash |
+| Model | gemma4:12b | Gemini 3.5 Flash |
 | Cost | Free | ~$0.001/doc |
 | Speed | 2-5s | 0.5-1s |
 | RAM | ~8GB | None |
@@ -181,7 +181,11 @@ Most documents (64%) are handled by the heuristic parser alone, making Stage 3 a
 
 ### Enrichment
 - 8-tier cascade: historical -> Open Food Facts -> UPCitemdb -> GS1 prefix -> fuzzy name -> local LLM -> Gemini -> Anthropic
+- Combined local pass (`lt enrich all`): fills unit, comparable_name, category and attributes in one LLM call per vendor batch (~4x fewer round-trips), with single-field fallbacks
 - Cross-language product comparison via `comparable_name` (e.g., "ΓΑΛΑ ΠΛΗΡΕΣ" -> "whole milk")
+- **Comparable-name canonicalization**: `tidy-comparable-names` strips leftover size/pack tokens deterministically; `propose-name-merges` / `apply-name-merges` cluster semantic duplicates (synonyms, singular/plural, OCR garble) by embedding similarity within each unit, human-review-gated (never auto-merges)
+- **Product state facet**: a controlled vocabulary (fresh / frozen / canned / dried / cured / pickled / roasted / cooked) written into each item's `attributes`, distinguishing forms of the same food the unit alone can't — fresh vs canned artichokes, raw vs roasted cashews, fresh vs smoked salmon (`lt enrich states`)
+- Flexible per-item `attributes` JSON (size, fat %, organic, free-range, lactose-free, state, ...) filterable/groupable independently
 - Enrichment provenance tracking with user feedback loop (confirm/reject via Web UI or Telegram)
 - Cross-vendor barcode matching (shared EAN/UPC propagation)
 - Nutritional tracking: joins purchased items with OFF product data for per-item nutritional estimates
@@ -189,6 +193,7 @@ Most documents (64%) are handled by the heuristic parser alone, making Stage 3 a
 - Scheduled enrichment daemon: automatic background processing on staggered intervals
 
 ### Analytics & Comparison
+- **Item-as-star analytics** (`item_stars` mirror + `lt items`): a denormalized per-FactItem view for fast aggregations — average comparable price by product/vendor/category (`avg-price`), price trends over time (`trend`), basket composition (`basket`); always grouped by `comparable_unit` so EUR/L is never blended with EUR/piece; rebuilt on collapse and after bulk enrichment (`rebuild`)
 - **Cross-vendor price comparison**: `comparable_unit_price` normalizes to EUR/kg, EUR/L, EUR/pcs across vendors and package sizes
 - **Price factor analysis**: discovers price drivers from data (brand premiums, organic markups, vendor pricing strategies)
 - **Product variant comparison**: compare 3% milk vs 1.5% milk, L eggs vs M eggs across vendors
@@ -275,7 +280,13 @@ uv run lt process -p <folder>        # Process folder as multi-page document
 uv run lt facts list                 # List all facts
 uv run lt facts show <id>            # Inspect a fact with items
 uv run lt enrich cascade [-l 100]    # Multi-source barcode enrichment
+uv run lt enrich all [-l 200]        # Combined local enrichment (unit+name+category+attributes)
+uv run lt enrich states              # Product state facet (fresh/canned/cured/roasted/...)
+uv run lt enrich propose-name-merges # Embedding-based comparable_name merge proposals (review-gated)
 uv run lt enrich gemini [-l 500]     # Gemini mega-batch enrichment
+uv run lt items avg-price --group-by comparable_name,comparable_unit  # Item price analytics
+uv run lt items trend "milk"         # Price trend for a product over time across vendors
+uv run lt items rebuild              # Resync the item_stars analytics mirror
 uv run lt analytics corrections      # Correction confusion matrix
 uv run lt export masked out.json -t 2   # Tier-masked export
 uv run lt export anonymized data.json   # Privacy-preserving export
@@ -486,18 +497,18 @@ alibi/
   normalizers/             # Pure functions: vendors, numbers, units, dates, tax
   refiners/                # Per-type refiners: purchase, invoice, warranty, contract
   predictions/             # MindsDB predictors (spending forecast, category classifier)
-  masking/                 # 4-tier data masking for privacy-controlled disclosure
+  masking/                 # 5-tier data masking (T0-T4) for privacy-controlled disclosure
   anonymization/           # 3-level anonymization export
   annotations/             # Open-ended metadata on entities (tags, notes, attributes)
   budgets/                 # Budget scenarios with category hierarchies
   matching/                # Duplicate detection (hash, perceptual, fuzzy)
   backup.py                # Database backup and restore with checksums
   maintenance/             # Learning aggregation, template reliability
-  db/                      # SQLite schema, connection, migrations (35 migrations)
+  db/                      # SQLite schema (generated from migrations), connection, migrations (002-044)
   daemon/                  # File watcher + enrichment scheduler
   i18n/                    # Multi-language support
   auth/                    # API key generation and validation (PBKDF2+salt)
-tests/                     # ~4650 tests
+tests/                     # ~4950 tests
 data/                      # Runtime data (gitignored)
 docs/                      # Architecture docs and ADRs
 ```
@@ -555,7 +566,7 @@ The heuristic parser and LLM correction are language-agnostic. Non-Latin scripts
 ## Development
 
 ```bash
-uv run pytest -x                             # Run tests (~4650 passing)
+uv run pytest -x                             # Run tests (~4950 passing)
 uv run black . && uv run flake8 && uv run mypy   # Lint + type check
 ```
 
@@ -568,16 +579,6 @@ Contributions are welcome. Please:
 3. Write tests for new functionality
 4. Run `uv run pytest -x` and `uv run black . && uv run flake8` before submitting
 5. Open a pull request
-
-## Research Paper
-
-The Atom-Cloud-Fact data model and the epistemological foundations of multi-source data reconciliation are described in:
-
-> Zharnikov, D. (2026). *The atom-cloud-fact epistemological pipeline: From financial document processing to brand perception modeling*. Available at: https://github.com/spectralbranding/sbt-papers/tree/main/alibi-epistemology
-
-## How to Cite
-
-If you use Alibi in your research or build on its concepts, please cite the paper above. A `CITATION.cff` file is included for automated citation tools.
 
 ## License
 

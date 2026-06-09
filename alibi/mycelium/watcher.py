@@ -30,7 +30,7 @@ from alibi.services.subscribers.notes import NoteSubscriber
 logger = logging.getLogger(__name__)
 
 # Default mycelium paths
-DEFAULT_VAULT_PATH = Path.home() / "Obsidian" / "vault"
+DEFAULT_VAULT_PATH = Path.home() / "Obsidian" / "family-vault"
 DEFAULT_INBOX_SUBPATH = "inbox/documents"
 
 # PID and log files for mycelium watcher
@@ -137,7 +137,7 @@ class MyceliumWatcher:
         """Initialize the Mycelium watcher.
 
         Args:
-            vault_path: Path to Obsidian vault (defaults to ~/Obsidian/vault)
+            vault_path: Path to Obsidian vault (defaults to ~/Obsidian/family-vault)
             inbox_subpath: Subpath within vault to watch (default: inbox/documents)
             generate_notes: Whether to generate Obsidian notes for processed docs
             archive_processed: Whether to move processed files to archive

@@ -323,3 +323,180 @@ class TestDetectDocumentType:
         result = detect_document_type(sample_image)
         assert result == "receipt"
         mock_legacy.assert_called_once()
+
+
+class TestExtractionQuality:
+    """Tests for the local-vs-cloud keep-better scoring."""
+
+    def test_complete_reconciling_beats_partial(self):
+        from alibi.extraction.vision import _extraction_quality
+
+        ocr = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\n"
+        good = {
+            "total": 11.98,
+            "line_items": [
+                {"total_price": 1.29},
+                {"total_price": 2.50},
+                {"total_price": 3.99},
+                {"total_price": 4.20},
+            ],
+        }
+        partial = {"total": 11.98, "line_items": [{"total_price": 1.29}]}
+        assert _extraction_quality(good, ocr) > _extraction_quality(partial, ocr)
+
+    def test_no_total_still_scores_coverage(self):
+        from alibi.extraction.vision import _extraction_quality
+
+        ocr = "A 1.00\nB 2.00\nC 3.00\nD 4.00\n"
+        many = {"line_items": [{} for _ in range(4)]}
+        few = {"line_items": [{}]}
+        assert _extraction_quality(many, ocr) > _extraction_quality(few, ocr)
+
+
+class TestCloudEscalation:
+    """Tests for confidence/coverage-gated cloud escalation."""
+
+    def _verif(self, conf):
+        v = MagicMock()
+        v.confidence = conf
+        return v
+
+    @patch("alibi.extraction.vision.get_config")
+    def test_no_escalation_when_disabled(self, mock_config):
+        from alibi.extraction.vision import _maybe_escalate_to_cloud
+
+        cfg = MagicMock()
+        cfg.gemini_escalation_enabled = False
+        cfg.gemini_api_key = "key"
+        mock_config.return_value = cfg
+        extracted = {"line_items": [{"total_price": 1.0}], "_pipeline": "parser_only"}
+        result = _maybe_escalate_to_cloud(
+            Path("x.jpg"), "receipt", extracted, self._verif(0.1), "ocr"
+        )
+        assert result is extracted
+
+    @patch("alibi.extraction.vision.get_config")
+    def test_no_escalation_without_key(self, mock_config):
+        from alibi.extraction.vision import _maybe_escalate_to_cloud
+
+        cfg = MagicMock()
+        cfg.gemini_escalation_enabled = True
+        cfg.gemini_api_key = None
+        mock_config.return_value = cfg
+        extracted = {"line_items": [], "_pipeline": "two_stage"}
+        result = _maybe_escalate_to_cloud(
+            Path("x.jpg"), "receipt", extracted, self._verif(0.1), "ocr"
+        )
+        assert result is extracted
+
+    @patch("alibi.extraction.vision.get_config")
+    def test_skips_when_already_cloud(self, mock_config):
+        from alibi.extraction.vision import _maybe_escalate_to_cloud
+
+        cfg = MagicMock()
+        cfg.gemini_escalation_enabled = True
+        cfg.gemini_api_key = "key"
+        cfg.escalation_confidence_threshold = 0.6
+        mock_config.return_value = cfg
+        extracted = {"line_items": [], "_pipeline": "gemini_vision"}
+        result = _maybe_escalate_to_cloud(
+            Path("x.jpg"), "receipt", extracted, self._verif(0.1), "ocr"
+        )
+        assert result is extracted
+
+    @patch("alibi.extraction.gemini_structurer.extract_from_image_gemini")
+    @patch("alibi.extraction.verification.verify_extraction")
+    @patch("alibi.extraction.vision.get_config")
+    def test_low_confidence_escalates_and_keeps_better_cloud(
+        self, mock_config, mock_verify, mock_gemini
+    ):
+        from alibi.extraction.vision import _maybe_escalate_to_cloud
+
+        cfg = MagicMock()
+        cfg.gemini_escalation_enabled = True
+        cfg.gemini_api_key = "key"
+        cfg.escalation_confidence_threshold = 0.6
+        mock_config.return_value = cfg
+
+        ocr = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\n"
+        local = {
+            "total": 11.98,
+            "line_items": [{"total_price": 1.29}],
+            "_pipeline": "two_stage",
+        }
+        cloud = {
+            "total": 11.98,
+            "line_items": [
+                {"total_price": 1.29},
+                {"total_price": 2.50},
+                {"total_price": 3.99},
+                {"total_price": 4.20},
+            ],
+            "_pipeline": "gemini_vision",
+        }
+        mock_gemini.return_value = cloud
+        mock_verify.return_value = MagicMock(confidence=0.95)
+
+        result = _maybe_escalate_to_cloud(
+            Path("x.jpg"), "receipt", local, self._verif(0.4), ocr
+        )
+        mock_gemini.assert_called_once()
+        assert result is cloud
+        assert result["_escalated"] is True
+        assert result["_local_pipeline"] == "two_stage"
+
+    @patch("alibi.extraction.gemini_structurer.extract_from_image_gemini")
+    @patch("alibi.extraction.vision.get_config")
+    def test_keeps_local_when_cloud_worse(self, mock_config, mock_gemini):
+        from alibi.extraction.vision import _maybe_escalate_to_cloud
+
+        cfg = MagicMock()
+        cfg.gemini_escalation_enabled = True
+        cfg.gemini_api_key = "key"
+        cfg.escalation_confidence_threshold = 0.6
+        mock_config.return_value = cfg
+
+        ocr = "Milk 1.29\nBread 2.50\nEggs 3.99\nButter 4.20\n"
+        local = {
+            "total": 11.98,
+            "line_items": [
+                {"total_price": 1.29},
+                {"total_price": 2.50},
+                {"total_price": 3.99},
+                {"total_price": 4.20},
+            ],
+            "_pipeline": "two_stage",
+        }
+        cloud = {
+            "total": 11.98,
+            "line_items": [{"total_price": 1.29}],
+            "_pipeline": "gemini_vision",
+        }
+        mock_gemini.return_value = cloud
+
+        result = _maybe_escalate_to_cloud(
+            Path("x.jpg"), "receipt", local, self._verif(0.4), ocr
+        )
+        assert result is local
+
+    @patch("alibi.extraction.gemini_structurer.extract_from_image_gemini")
+    @patch("alibi.extraction.vision.get_config")
+    def test_gemini_failure_returns_local(self, mock_config, mock_gemini):
+        from alibi.extraction.vision import _maybe_escalate_to_cloud
+
+        cfg = MagicMock()
+        cfg.gemini_escalation_enabled = True
+        cfg.gemini_api_key = "key"
+        cfg.escalation_confidence_threshold = 0.6
+        mock_config.return_value = cfg
+        mock_gemini.side_effect = RuntimeError("api down")
+
+        local = {
+            "total": 11.98,
+            "line_items": [{"total_price": 1.29}],
+            "_pipeline": "two_stage",
+        }
+        result = _maybe_escalate_to_cloud(
+            Path("x.jpg"), "receipt", local, self._verif(0.1), "ocr"
+        )
+        assert result is local

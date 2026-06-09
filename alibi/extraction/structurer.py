@@ -130,9 +130,11 @@ def structure_ocr_text(
     doc_type: str = "receipt",
     model: str | None = None,
     ollama_url: str | None = None,
-    timeout: float = 120.0,
+    timeout: float | None = None,
     prompt_mode: str | None = None,
     emphasis_prompt: str | None = None,
+    enforce_schema: bool = False,
+    response_format: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Send OCR text to a text-only model for structured extraction.
 
@@ -149,6 +151,20 @@ def structure_ocr_text(
         prompt_mode: 'specialized' or 'universal' (defaults to config).
         emphasis_prompt: If provided, used instead of the default prompt
             (for retry with emphasis on failed checks).
+        enforce_schema: Constrain decoding to the extraction schema even when
+            an ``emphasis_prompt`` is supplied. Set by the document
+            correction / emphasis-retry callers, whose prompts target the same
+            canonical extraction schema (vendor / line_items / total). Left
+            False by callers whose emphasis prompt asks for a different shape
+            (micro-prompts, the item-list enrichment passes): those would be
+            broken by the full schema. Ignored unless
+            ``config.ollama_structured_output`` is enabled.
+        response_format: An explicit JSON schema to constrain decoding to. Takes
+            precedence over ``enforce_schema`` / the doc schema, so an emphasis
+            caller with a DIFFERENT shape (the item-list enrichment passes) can
+            still force valid, schema-conforming JSON for its own contract —
+            fixing the malformed-JSON failures the local model produces on
+            garbled batches. Ignored unless ``config.ollama_structured_output``.
 
     Returns:
         Structured extraction dict.
@@ -157,6 +173,8 @@ def structure_ocr_text(
         VisionExtractionError: If structuring fails.
     """
     config = get_config()
+    if timeout is None:
+        timeout = config.structure_timeout
 
     # Route to Gemini when enabled and not doing emphasis retry
     # (emphasis prompts are Ollama-specific correction prompts)
@@ -196,14 +214,22 @@ def structure_ocr_text(
     # Constrain decoding to the extraction schema when enabled. This is the
     # WHAT-prompt enforcement layer: the local model can only emit
     # schema-conforming JSON, matching the Gemini response_schema path.
-    # Skipped for emphasis/correction retries, whose free-form correction
-    # prompts ask for shapes the strict schema would reject.
-    response_format: dict[str, Any] | None = None
-    if config.ollama_structured_output and not emphasis_prompt:
+    # Applied to the default extraction path and to correction / emphasis
+    # retries (enforce_schema=True) — those re-ask for the SAME canonical
+    # extraction schema, so the constraint is exactly the contract. Skipped for
+    # emphasis prompts that request a different shape (micro-prompts, the
+    # item-list enrichment passes), which leave enforce_schema at its default.
+    # An explicit caller schema (the item-list enrichment passes) wins: it is the
+    # caller's own output contract, so constrain to it directly. Otherwise build
+    # the doc extraction schema for the canonical extraction / correction path.
+    # The global ``ollama_structured_output`` switch gates both.
+    if response_format is None and (not emphasis_prompt or enforce_schema):
         try:
             response_format = get_extraction_json_schema(doc_type)
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("Could not build extraction schema for %s: %s", doc_type, e)
+    if not config.ollama_structured_output:
+        response_format = None
 
     result = _call_ollama_text(
         ollama_url, model, prompt, timeout, response_format=response_format
