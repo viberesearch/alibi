@@ -53,7 +53,7 @@ def detect_language(text: str) -> str:
         return "en"
 
     # Find dominant script
-    dominant_script = max(script_counts, key=script_counts.get)  # type: ignore
+    dominant_script = max(script_counts, key=lambda s: script_counts[s])
 
     # Map script to language
     return _script_to_language(dominant_script)

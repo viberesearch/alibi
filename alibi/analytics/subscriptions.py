@@ -222,7 +222,7 @@ def _analyze_cluster(
     vendor_counts: dict[str, int] = defaultdict(int)
     for vendor, _, _, _ in cluster:
         vendor_counts[vendor] += 1
-    original_vendor = max(vendor_counts, key=vendor_counts.get)  # type: ignore[arg-type]
+    original_vendor = max(vendor_counts, key=lambda v: vendor_counts[v])
 
     last_date = sorted_cluster[-1][2]
     next_expected = last_date + timedelta(days=int(round(avg_interval)))
