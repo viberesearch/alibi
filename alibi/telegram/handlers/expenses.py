@@ -1,16 +1,15 @@
-"""Expenses command handler."""
+"""Expenses command handler — thin client over the host ``/facts`` endpoint."""
 
 import logging
+import math
 from datetime import date, timedelta
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-import math
-
-from alibi.services.query import list_facts
-from alibi.telegram.handlers import require_db
+from alibi.telegram.api_client import AlibiAPIError
+from alibi.telegram.handlers._common import api_key_for, client
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -32,7 +31,6 @@ async def expenses_handler(message: Message) -> None:
 
     if message.text:
         parts = message.text.split()
-        # Parse "page N" from args
         page_idx = None
         for i, part in enumerate(parts):
             if part.lower() == "page" and i + 1 < len(parts):
@@ -44,7 +42,6 @@ async def expenses_handler(message: Message) -> None:
                 except ValueError:
                     pass
 
-        # Parse days (first numeric arg that isn't part of "page N")
         if len(parts) > 1 and (page_idx is None or page_idx != 1):
             try:
                 days = int(parts[1])
@@ -58,18 +55,23 @@ async def expenses_handler(message: Message) -> None:
                     )
                     return
 
-    db = await require_db(message)
-    if db is None:
-        return
-
     since_date = date.today() - timedelta(days=days)
 
-    result = list_facts(db, filters={"date_from": since_date}, limit=500)
-    all_facts = result["facts"]
+    try:
+        body = await client.list_facts(
+            api_key=api_key_for(message),
+            date_from=since_date.isoformat(),
+            per_page=200,
+        )
+    except AlibiAPIError:
+        logger.exception("Failed to list facts for expenses")
+        await message.answer("Could not load expenses. Please try again.")
+        return
 
-    # Filter to expense-relevant types in Python; the service layer only
-    # supports a single exact fact_type filter, so we fetch broadly and
-    # narrow here.
+    all_facts = body.get("items", [])
+
+    # The API filters on a single exact fact_type, so fetch broadly and narrow
+    # to the expense-relevant types here.
     facts = [f for f in all_facts if f.get("fact_type") in _EXPENSE_TYPES]
 
     if not facts:
@@ -84,24 +86,20 @@ async def expenses_handler(message: Message) -> None:
         page = total_pages
 
     start = (page - 1) * per_page
-    end = start + per_page
-    page_facts = facts[start:end]
+    page_facts = facts[start : start + per_page]
 
     response = f"*Expenses - Last {days} days*\n\n"
-
     for fact in page_facts:
-        vendor = fact.get("vendor") or "Unknown"
+        vendor = (fact.get("vendor") or "Unknown")[:20]
         txn_date = fact.get("event_date") or ""
         amount = float(fact["total_amount"]) if fact.get("total_amount") else 0.0
         fact_type = fact.get("fact_type") or ""
-
-        response += f"{txn_date} - {vendor[:20]}: {amount:.2f}\n"
+        response += f"{txn_date} - {vendor}: {amount:.2f}\n"
         if fact_type == "subscription_payment":
             response += f"  _{fact_type}_\n"
 
     response += f"\n*Total: {total:.2f} {currency}*"
     response += f"\nPage {page}/{total_pages}."
-
     if page < total_pages:
         response += f" Use `/expenses {days} page {page + 1}` for next."
 

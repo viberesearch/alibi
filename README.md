@@ -4,6 +4,21 @@ Local-first financial document intelligence. Extracts structured data from photo
 
 **API-first architecture**: every feature is available through the REST API. The CLI, Telegram bot, MCP server, and web UI are all thin clients over the same service layer.
 
+## Services & URLs
+
+Once running, alibi exposes these interfaces (all thin clients over the same REST API). Defaults assume a local host:
+
+| Interface | URL / address | Start | Notes |
+|-----------|---------------|-------|-------|
+| **Web UI** | <http://localhost:3100/web> | `uv run lt serve` | User management + enrichment dashboard (self-contained single-page app) |
+| **REST API** | <http://localhost:3100> | `uv run lt serve` | API-first; every feature. Swagger below |
+| **API docs (Swagger)** | <http://localhost:3100/docs> | `uv run lt serve` | Interactive OpenAPI explorer |
+| **Health check** | <http://localhost:3100/health> | `uv run lt serve` | Liveness probe (returns 200) |
+| **Telegram bot** | your bot in Telegram | `./docker/run-telegram-bot.sh up` | Thin HTTP client of the API; runs as an OrbStack container |
+| **Datasette explorer** | <http://127.0.0.1:8001> | `./scripts/run-datasette.sh` | Read-only record browser over a WAL-safe DB snapshot. See [docs/DATASETTE_EXPLORER.md](docs/DATASETTE_EXPLORER.md) |
+
+Host/port are configurable via `ALIBI_API_HOST` (default `127.0.0.1`) and `ALIBI_API_PORT` (default `3100`) — see [.env.example](.env.example). The Telegram container reaches the host API at `host.docker.internal:3100` (`ALIBI_API_URL`).
+
 ## Why alibi?
 
 Receipt scanners extract vendor + total. Expense trackers require manual data entry. Cloud APIs charge per scan and see all your data.
@@ -226,7 +241,7 @@ Most documents (64%) are handled by the heuristic parser alone, making Stage 3 a
 
 ## Interfaces
 
-Alibi is **API-first** — the REST API is the primary interface. All other interfaces (CLI, Telegram, MCP) call the same service layer.
+Alibi is **API-first** — the REST API is the primary interface. All other interfaces (CLI, Telegram, MCP) call the same service layer. The Telegram bot is a *thin HTTP client* of the API, and the read-only [Datasette explorer](docs/DATASETTE_EXPLORER.md) sits beside it for browsing and analysing records.
 
 ### REST API
 
@@ -309,12 +324,33 @@ Alibi is MCP-native -- AI assistants can process documents, query facts, update 
 
 ### Telegram Bot
 
-The Telegram bot provides mobile document capture and conversational queries. Setup:
+The Telegram bot provides mobile document capture and conversational queries. It
+is a **thin HTTP client of the API**: it owns no DB, Ollama, or pipeline code and
+forwards every request to the host API (`lt serve`, :3100) over httpx. This lets
+it run isolated in a container today and move to a remote VPS later with a
+one-line `ALIBI_API_URL` change.
 
-1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram
-2. Install the telegram extra: `uv sync --extra telegram`
-3. Set the token: `export TELEGRAM_BOT_TOKEN=<your-token>`
-4. Start the bot: `uv run lt telegram start`
+Recommended (containerised, single poller):
+
+```bash
+# Requires TELEGRAM_BOT_TOKEN (+ optional ALIBI_TELEGRAM_ALLOWED_USERS) in .env.
+./docker/run-telegram-bot.sh up        # build + start the OrbStack container
+./docker/run-telegram-bot.sh logs      # tail
+```
+
+The container (`docker-compose.telegram.yml`, `Dockerfile.telegram`) reaches the
+host API via `host.docker.internal:3100` and persists its keystore + offline
+spool on a mounted `/data` volume. For local dev without the container you can
+still run it in-process, but it is gated behind `--force` to prevent two pollers
+on one token (`uv sync --extra telegram` then `uv run lt telegram start --force`).
+
+**Auth (per-user attribution):** each Telegram user links their Alibi account
+once with `/link <mnemonic-api-key>`; the bot stores `{telegram_id → API key}`
+in its keystore and sends it as `X-API-Key` so the API resolves the right user.
+
+**Offline resilience:** an upload that arrives while the API is briefly
+unreachable (e.g. a boot-order race) is spooled to disk and processed
+automatically when the API returns — no message is lost.
 
 **Document capture** -- send a photo or file to the bot, or use a type command first:
 
@@ -359,6 +395,23 @@ export ALIBI_TELEGRAM_ALLOWED_USERS=123456789,987654321
 ```
 
 When set, the bot silently ignores messages from all other users. **Strongly recommended** for any internet-facing bot.
+
+### Datasette Explorer (read-only)
+
+A web UI for **listing and analysing records** without writing code, served by
+[Datasette](https://datasette.io/) over a periodic, WAL-safe snapshot of the
+database. It runs as a launchd service on the host, bound to `127.0.0.1:8001` (no
+auth, so not exposed on the LAN — tunnel or use Tailscale for remote access).
+
+```bash
+./scripts/run-datasette.sh             # foreground (uv tool run; first run downloads it)
+./scripts/datasette_refresh.sh         # re-snapshot + reload the service
+```
+
+Browse any table (start with `item_stars`), run ad-hoc read-only SQL, export
+CSV/JSON, or use the built-in canned queries (spend by vendor/month/category,
+cross-vendor comparable-unit-price comparison, cheapest vendor per product). See
+[docs/DATASETTE_EXPLORER.md](docs/DATASETTE_EXPLORER.md).
 
 ### File Watcher
 
@@ -486,7 +539,7 @@ alibi/
   api/routers/             # FastAPI REST API (19 routers, ~107 endpoints)
   web/                     # Web UI (single-page application)
   mcp/                     # MCP server (25 tools)
-  telegram/                # Telegram bot (13 handlers + middleware)
+  telegram/                # Telegram bot — thin API client (13 handlers + api_client/keystore/spool)
   extraction/              # 3-stage pipeline: OCR, heuristic parser, LLM structurer
   processing/              # Pipeline orchestration, folder routing, image optimizer
   atoms/                   # Atom parsing from extraction data
@@ -509,8 +562,11 @@ alibi/
   i18n/                    # Multi-language support
   auth/                    # API key generation and validation (PBKDF2+salt)
 tests/                     # ~4950 tests
-data/                      # Runtime data (gitignored)
+data/                      # Runtime data (gitignored; incl. explore/ Datasette snapshot)
 docs/                      # Architecture docs and ADRs
+datasette/                 # Datasette explorer metadata (canned queries)
+scripts/                   # Ops scripts (datasette snapshot/run/refresh, etc.)
+docker/                    # Container run helpers (thin Telegram bot)
 ```
 
 ## Configuration

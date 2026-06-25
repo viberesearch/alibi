@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS facts (
         'confirmed', 'partial', 'needs_review'
     )),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-, vendor_key TEXT, country TEXT DEFAULT NULL, event_time TEXT DEFAULT NULL);
+, vendor_key TEXT, country TEXT DEFAULT NULL, event_time TEXT DEFAULT NULL, eur_rate REAL DEFAULT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_facts_vendor ON facts(vendor);
 
@@ -413,7 +413,7 @@ CREATE TABLE IF NOT EXISTS item_stars (
     event_date DATE,
     event_time TEXT,
     refreshed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-, attributes JSON DEFAULT NULL);
+, attributes JSON DEFAULT NULL, total_price_eur REAL DEFAULT NULL, comparable_unit_price_eur REAL DEFAULT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_item_stars_fact ON item_stars(fact_id);
 
@@ -450,6 +450,14 @@ CREATE TABLE IF NOT EXISTS "items" (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     modified_at DATETIME,
     created_by TEXT REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    base TEXT NOT NULL,          -- ISO 4217 currency code (e.g. CAD, TRY)
+    rate_date TEXT NOT NULL,     -- ISO date the rate applies to
+    eur_per_unit REAL NOT NULL,  -- EUR for 1 unit of `base` on `rate_date`
+    fetched_at TEXT,             -- when this rate was fetched/cached
+    PRIMARY KEY (base, rate_date)
 );
 
 -- Record every applied migration so a fresh install is at head.
@@ -497,3 +505,4 @@ INSERT OR IGNORE INTO schema_version (version) VALUES (41);
 INSERT OR IGNORE INTO schema_version (version) VALUES (42);
 INSERT OR IGNORE INTO schema_version (version) VALUES (43);
 INSERT OR IGNORE INTO schema_version (version) VALUES (44);
+INSERT OR IGNORE INTO schema_version (version) VALUES (45);

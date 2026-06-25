@@ -242,6 +242,16 @@ class TestMakeVendorKey:
         assert make_vendor_key("", "") is None
         assert make_vendor_key(None, "") is None
 
+    def test_sentinel_registration_falls_back_to_name(self) -> None:
+        """A literal 'null'/'N/A' VAT must be treated as missing, not become a
+        key of "NULL" (which would group every keyless fact under one vendor)."""
+        for sentinel in ("null", "NULL", "N/A", "n/a", "-", "none", "  null  "):
+            key = make_vendor_key(sentinel, "Some Shop")
+            assert key is not None and key.startswith("noid_"), sentinel
+        # And with no name either, sentinel registration yields None.
+        assert make_vendor_key("null", None) is None
+        assert make_vendor_key("N/A", "") is None
+
 
 # ---------------------------------------------------------------------------
 # _best_product_match tests

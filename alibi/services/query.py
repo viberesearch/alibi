@@ -128,9 +128,23 @@ def list_facts(
     )
     total: int = count_row["cnt"] if count_row else 0
 
-    # Fetch paginated rows
+    # Fetch paginated rows, including a per-fact PRODUCT line-item count and the
+    # source document type(s) (receipt / payment_confirmation / invoice / ...) so
+    # list views can show what a fact was built from, not just its fact_type.
+    # Non_Item lines (totals, tax/VAT analysis, payment-method and footer text the
+    # structurer sometimes captures) are excluded from the count, matching how
+    # basket analytics treat them, so a 2-item receipt reads as 2, not 10.
     data_rows = db.fetchall(
-        f"SELECT * FROM facts WHERE {where} ORDER BY event_date DESC LIMIT ? OFFSET ?",  # noqa: S608
+        f"""SELECT *,
+                   (SELECT COUNT(*) FROM fact_items fi
+                    WHERE fi.fact_id = facts.id
+                      AND COALESCE(fi.category, '') != 'Non_Item') AS item_count,
+                   (SELECT GROUP_CONCAT(DISTINCT
+                              json_extract(d.raw_extraction, '$.document_type'))
+                    FROM bundles b JOIN documents d ON d.id = b.document_id
+                    WHERE b.cloud_id = facts.cloud_id) AS document_type
+            FROM facts WHERE {where}
+            ORDER BY event_date DESC LIMIT ? OFFSET ?""",  # noqa: S608
         tuple(params) + (limit, offset),
     )
 

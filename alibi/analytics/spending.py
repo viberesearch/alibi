@@ -12,8 +12,31 @@ from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from alibi.normalizers.vendors import is_payment_intermediary
+
 if TYPE_CHECKING:
     from alibi.db.connection import DatabaseManager
+
+
+def eur_amount(fact: dict[str, Any]) -> Decimal | None:
+    """A fact's ``total_amount`` normalised to EUR, or ``None`` if not convertible.
+
+    Multiplies the amount by the fact's resolved ``eur_rate`` (stamped by
+    ``lt fx backfill``). An EUR / currency-less fact converts 1:1 even before any
+    backfill; a foreign fact with no rate yet returns ``None`` so it drops out of
+    the spend total rather than being summed as if it were euros. Keeps the
+    dashboard spend in a single comparable currency.
+    """
+    amount = fact.get("total_amount")
+    if amount is None:
+        return None
+    rate = fact.get("eur_rate")
+    if rate is None:
+        currency = (fact.get("currency") or "EUR").upper()
+        if currency != "EUR":
+            return None
+        rate = 1.0
+    return Decimal(str(amount)) * Decimal(str(rate))
 
 
 @dataclass
@@ -89,9 +112,13 @@ def spending_by_vendor(
     if not facts:
         return []
 
-    # Group by vendor_key or vendor name
+    # Group by vendor_key or vendor name. Skip payment intermediaries (card
+    # acquirers / ATM withdrawals) -- on a lone slip the "vendor" is the acquirer
+    # and an ATM line is a cash withdrawal, not merchant spend.
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for f in facts:
+        if is_payment_intermediary(f.get("vendor")):
+            continue
         key = f.get("vendor_key") or f.get("vendor") or "Unknown"
         groups[key].append(f)
 
@@ -104,8 +131,9 @@ def spending_by_vendor(
         vendor_name = "Unknown"
 
         for f in vendor_facts:
-            if f.get("total_amount") is not None:
-                amounts.append(Decimal(str(f["total_amount"])))
+            amt = eur_amount(f)
+            if amt is not None:
+                amounts.append(amt)
             event_date = f.get("event_date")
             if isinstance(event_date, str):
                 event_date = date.fromisoformat(event_date)
@@ -168,7 +196,8 @@ def spending_by_month(
     monthly: dict[str, list[Decimal]] = defaultdict(list)
 
     for f in facts:
-        if f.get("total_amount") is None:
+        amt = eur_amount(f)
+        if amt is None:
             continue
 
         event_date = f.get("event_date")
@@ -178,7 +207,7 @@ def spending_by_month(
             continue
 
         month_key = f"{event_date.year}-{event_date.month:02d}"
-        monthly[month_key].append(Decimal(str(f["total_amount"])))
+        monthly[month_key].append(amt)
 
     results: list[MonthlySpend] = []
     for month_key in sorted(monthly.keys()):
@@ -315,7 +344,8 @@ def seasonal_patterns(
     years_seen: set[int] = set()
 
     for f in facts:
-        if f.get("total_amount") is None:
+        amt = eur_amount(f)
+        if amt is None:
             continue
         event_date = f.get("event_date")
         if isinstance(event_date, str):
@@ -323,9 +353,7 @@ def seasonal_patterns(
         if not event_date:
             continue
 
-        year_month_totals[(event_date.year, event_date.month)] += Decimal(
-            str(f["total_amount"])
-        )
+        year_month_totals[(event_date.year, event_date.month)] += amt
         years_seen.add(event_date.year)
 
     total_years = len(years_seen)

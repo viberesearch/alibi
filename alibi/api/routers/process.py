@@ -36,10 +36,12 @@ class ProcessResponse(BaseModel):
 
     success: bool
     document_id: Optional[str] = None
+    fact_id: Optional[str] = None
     is_duplicate: bool = False
     duplicate_of: Optional[str] = None
     vendor: Optional[str] = None
     amount: Optional[str] = None
+    currency: Optional[str] = None
     date: Optional[str] = None
     document_type: Optional[str] = None
     items_count: int = 0
@@ -75,8 +77,12 @@ def _build_folder_context(doc_type_str: Optional[str]) -> Optional[FolderContext
     return FolderContext(doc_type=doc_type)
 
 
-def _result_to_response(result: Any) -> dict[str, Any]:
-    """Convert a ProcessingResult to a response dict."""
+def _result_to_response(result: Any, db: DatabaseManager) -> dict[str, Any]:
+    """Convert a ProcessingResult to a response dict.
+
+    Resolves the collapsed ``fact_id`` so thin clients (e.g. the Telegram bot)
+    can offer ``/fix`` and attach a location without a second round-trip.
+    """
     resp: dict[str, Any] = {
         "success": result.success,
         "document_id": result.document_id,
@@ -89,8 +95,13 @@ def _result_to_response(result: Any) -> dict[str, Any]:
         resp["vendor"] = result.extracted_data.get("vendor")
         total = result.extracted_data.get("total")
         resp["amount"] = str(total) if total is not None else None
+        resp["currency"] = result.extracted_data.get("currency")
         resp["date"] = result.extracted_data.get("date")
         resp["document_type"] = result.extracted_data.get("document_type")
+    if result.success and result.document_id:
+        from alibi.services import get_primary_fact_id_for_document
+
+        resp["fact_id"] = get_primary_fact_id_for_document(db, result.document_id)
     return resp
 
 
@@ -110,6 +121,9 @@ async def process_single(
     map_url: Optional[str] = Query(
         None, description="Google Maps URL to associate with this document"
     ),
+    vendor: Optional[str] = Query(
+        None, description="Optional vendor name hint to aid extraction"
+    ),
 ) -> ProcessResponse:
     """Process a single uploaded document file."""
     folder_context = _build_folder_context(type)
@@ -117,6 +131,8 @@ async def process_single(
         folder_context = FolderContext()
     folder_context.source = "api"
     folder_context.user_id = user["id"]
+    if vendor:
+        folder_context.vendor_hint = vendor
     _apply_map_url(folder_context, map_url)
 
     ext = Path(file.filename or "").suffix.lower()
@@ -129,7 +145,7 @@ async def process_single(
 
     filename = file.filename or "upload.bin"
     result = ingestion.process_bytes(db, data, filename, folder_context=folder_context)
-    return ProcessResponse(**_result_to_response(result))
+    return ProcessResponse(**_result_to_response(result, db))
 
 
 @router.post("/batch", response_model=list[ProcessResponse])
@@ -171,7 +187,7 @@ async def process_batch(
         result = ingestion.process_bytes(
             db, data, filename, folder_context=folder_context
         )
-        responses.append(ProcessResponse(**_result_to_response(result)))
+        responses.append(ProcessResponse(**_result_to_response(result, db)))
     return responses
 
 
@@ -191,6 +207,9 @@ async def process_group(
     map_url: Optional[str] = Query(
         None, description="Google Maps URL to associate with this document"
     ),
+    vendor: Optional[str] = Query(
+        None, description="Optional vendor name hint to aid extraction"
+    ),
 ) -> ProcessResponse:
     """Process multiple files as pages of a single document.
 
@@ -207,6 +226,8 @@ async def process_group(
         folder_context = FolderContext()
     folder_context.source = "api"
     folder_context.user_id = user["id"]
+    if vendor:
+        folder_context.vendor_hint = vendor
     _apply_map_url(folder_context, map_url)
 
     pages: list[tuple[bytes, str]] = []
@@ -227,4 +248,4 @@ async def process_group(
     result = ingestion.process_document_group(
         db, saved_paths, folder_context=folder_context
     )
-    return ProcessResponse(**_result_to_response(result))
+    return ProcessResponse(**_result_to_response(result, db))

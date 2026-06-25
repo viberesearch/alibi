@@ -2155,11 +2155,23 @@ def telegram() -> None:
 
 
 @telegram.command("start")
-def telegram_start() -> None:
-    """Start the Telegram bot.
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Run the bot in-process anyway (local dev only).",
+)
+def telegram_start(force: bool) -> None:
+    """Start the Telegram bot (in-process; superseded by the container).
+
+    The canonical runtime is now the thin bot container on the host
+    (docker-compose.telegram.yml). Only ONE long-poller may run per bot token --
+    starting this alongside the container causes Telegram 409 Conflict. This
+    path is kept for local development behind --force (or ALIBI_TELEGRAM_ALLOW_HOST=1).
 
     Requires TELEGRAM_BOT_TOKEN environment variable.
     """
+    import os
+
     from alibi.telegram.main import run
 
     config = get_config()
@@ -2169,7 +2181,21 @@ def telegram_start() -> None:
         console.print("Please set TELEGRAM_BOT_TOKEN environment variable.")
         raise click.Abort()
 
-    console.print("[bold blue]Starting Alibi Telegram Bot...[/bold blue]")
+    if not force and os.environ.get("ALIBI_TELEGRAM_ALLOW_HOST") != "1":
+        console.print(
+            "[yellow]The Telegram bot now runs in a container "
+            "(docker-compose.telegram.yml).[/yellow]"
+        )
+        console.print(
+            "Running a second poller on the same token causes Telegram 409 " "Conflict."
+        )
+        console.print(
+            "For local dev, re-run with [bold]--force[/bold] "
+            "(or set ALIBI_TELEGRAM_ALLOW_HOST=1)."
+        )
+        raise click.Abort()
+
+    console.print("[bold blue]Starting Alibi Telegram Bot (in-process)...[/bold blue]")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
     try:

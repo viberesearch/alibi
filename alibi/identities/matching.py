@@ -12,11 +12,26 @@ from __future__ import annotations
 import difflib
 import json
 import logging
+from difflib import SequenceMatcher
 from typing import Any
 
 from alibi.db.connection import DatabaseManager
 
 logger = logging.getLogger(__name__)
+
+# Fuzzy vendor-identity clustering thresholds. These mirror the cloud-formation
+# vendor scorer (alibi/clouds/formation.py) so the identity registry and
+# formation agree on "same merchant". The registry is stickier than a single
+# formation match (it permanently unifies future scans), so EVERY fuzzy match
+# here also requires name corroboration — a high VAT similarity alone (which
+# could be two businesses with near-sequential registrations) is not enough.
+_VAT_FUZZY_THRESHOLD = 0.85  # OCR-typo tolerance on the VAT digits
+_VAT_FUZZY_NAME_FLOOR = 0.60  # ...with names that broadly agree
+_VAT_CORROBORATED_THRESHOLD = 0.70  # weaker VAT match...
+_VAT_CORROBORATED_NAME_FLOOR = 0.85  # ...needs a strong name match
+_NAME_ONLY_THRESHOLD = 0.90  # cross-script / OCR-garbled name, VAT missing
+_NAME_VAT_CONTRADICTION = 0.40  # block name-only merge if VATs clearly differ
+_MIN_FUZZY_SLUG_LEN = 5  # don't fuzzy-match tiny/generic slugs
 
 
 def find_vendor_identity(
@@ -69,7 +84,98 @@ def find_vendor_identity(
         if result:
             return result
 
+    # Fuzzy fallback: catch OCR-variant VATs and cross-script / garbled name
+    # variants that the exact passes above miss. This is what the 2026-06 manual
+    # vendor-key reconciliation had to fix by hand; clustering them here makes
+    # future ingests auto-assign the canonical identity (and, via
+    # get_canonical_vendor_key, the canonical vendor_key).
+    result = _find_vendor_fuzzy(conn, vendor_name, registration or vendor_key)
+    if result:
+        return result
+
     return None
+
+
+def _find_vendor_fuzzy(
+    conn: Any,
+    vendor_name: str | None,
+    registration: str | None,
+) -> dict[str, Any] | None:
+    """Last-resort fuzzy vendor-identity match.
+
+    Resolves a merchant whose VAT is OCR'd differently scan-to-scan (PAPAS
+    10355430K vs 103055400K) or whose name is captured in a different script /
+    garbled by OCR, to its existing identity instead of spawning a new one. Every
+    rule requires name corroboration (see the module thresholds), so a high VAT
+    similarity between two genuinely different businesses won't merge them.
+
+    Returns the hydrated identity dict of the best match, or None.
+    """
+    from alibi.normalizers.vendors import normalize_vendor_slug
+
+    query_slug = normalize_vendor_slug(vendor_name) if vendor_name else ""
+    query_vat = ""
+    if registration:
+        query_vat = _strip_country_prefix(registration.upper().replace(" ", ""))
+    if not query_slug and not query_vat:
+        return None
+
+    rows = conn.execute(
+        "SELECT i.id AS identity_id, m.member_type, m.value "
+        "FROM identities i JOIN identity_members m ON i.id = m.identity_id "
+        "WHERE i.entity_type = 'vendor' AND i.active = 1 "
+        "AND m.member_type IN "
+        "('vat_number', 'tax_id', 'vendor_key', 'normalized_name')"
+    ).fetchall()
+
+    # Group each candidate identity's comparable members.
+    candidates: dict[str, dict[str, list[str]]] = {}
+    for r in rows:
+        slot = candidates.setdefault(r["identity_id"], {"vat": [], "slug": []})
+        value = str(r["value"]) if r["value"] is not None else ""
+        if not value:
+            continue
+        if r["member_type"] == "normalized_name":
+            slot["slug"].append(value)
+        else:
+            bare = _strip_country_prefix(value.upper().replace(" ", ""))
+            if bare:
+                slot["vat"].append(bare)
+
+    best_id: str | None = None
+    best_score = 0.0
+    for identity_id, mem in candidates.items():
+        name_ratio = (
+            max((SequenceMatcher(None, query_slug, s).ratio() for s in mem["slug"]))
+            if query_slug and mem["slug"]
+            else 0.0
+        )
+        vat_ratio = (
+            max((SequenceMatcher(None, query_vat, v).ratio() for v in mem["vat"]))
+            if query_vat and mem["vat"]
+            else 0.0
+        )
+        has_both_vat = bool(query_vat) and bool(mem["vat"])
+
+        matched = (
+            (vat_ratio >= _VAT_FUZZY_THRESHOLD and name_ratio >= _VAT_FUZZY_NAME_FLOOR)
+            or (
+                vat_ratio >= _VAT_CORROBORATED_THRESHOLD
+                and name_ratio >= _VAT_CORROBORATED_NAME_FLOOR
+            )
+            or (
+                name_ratio >= _NAME_ONLY_THRESHOLD
+                and len(query_slug) >= _MIN_FUZZY_SLUG_LEN
+                and not (has_both_vat and vat_ratio < _NAME_VAT_CONTRADICTION)
+            )
+        )
+        if matched and (vat_ratio + name_ratio) > best_score:
+            best_score = vat_ratio + name_ratio
+            best_id = identity_id
+
+    if best_id is None:
+        return None
+    return _hydrate_identity(conn, best_id)
 
 
 def suggest_vendor_correction(
@@ -405,16 +511,34 @@ def _find_by_member(
 
     identity = dict(row)
     identity.pop("_member_value", None)
-    if identity.get("metadata") and isinstance(identity["metadata"], str):
-        identity["metadata"] = json.loads(identity["metadata"])
+    return _hydrate_identity(conn, identity["id"], row=identity)
+
+
+def _hydrate_identity(
+    conn: Any,
+    identity_id: str,
+    row: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Load an identity row plus its members into a dict (decoding metadata)."""
+    if row is None:
+        fetched = conn.execute(
+            "SELECT * FROM identities WHERE id = ?",
+            (identity_id,),
+        ).fetchone()
+        if not fetched:
+            return None
+        row = dict(fetched)
+
+    if row.get("metadata") and isinstance(row["metadata"], str):
+        row["metadata"] = json.loads(row["metadata"])
 
     members = conn.execute(
         "SELECT * FROM identity_members WHERE identity_id = ?",
-        (identity["id"],),
+        (identity_id,),
     ).fetchall()
-    identity["members"] = [dict(m) for m in members]
+    row["members"] = [dict(m) for m in members]
 
-    return identity
+    return row
 
 
 def ensure_vendor_identity(

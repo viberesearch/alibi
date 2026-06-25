@@ -68,6 +68,29 @@ async def spending(
     return serialized
 
 
+@router.get("/spending-summary")
+async def spending_summary_overview(
+    db: Annotated[DatabaseManager, Depends(get_database)],
+    user: Annotated[dict[str, Any], Depends(require_user)],
+    date_from: Optional[str] = Query(None, description="Since date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Until date (YYYY-MM-DD)"),
+) -> dict[str, Any]:
+    """EUR-normalised spending overview for the web Analytics dashboard.
+
+    Returns headline stats (total spent, transaction count, average basket,
+    top currency) plus category and vendor breakdowns in one call.
+    """
+    filters: dict[str, Any] = {}
+    if date_from:
+        filters["date_from"] = date.fromisoformat(date_from)
+    if date_to:
+        filters["date_to"] = date.fromisoformat(date_to)
+
+    result = analytics.spending_overview(db, filters=filters)
+    serialized: dict[str, Any] = _serialize(result)
+    return serialized
+
+
 @router.get("/subscriptions")
 async def subscriptions(
     db: Annotated[DatabaseManager, Depends(get_database)],

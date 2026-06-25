@@ -52,19 +52,18 @@ class TestFormatResultWithLocationHint:
     """Test that format_result includes location prompt."""
 
     def test_includes_location_prompt(self):
+        from alibi.telegram.api_client import ProcessResult
         from alibi.telegram.handlers.upload import _format_result
 
-        class MockResult:
-            success = True
-            is_duplicate = False
-            document_id = "fact-123"
-            extracted_data = {"vendor": "Shop", "total": 10.0}
-            line_items = []
-            record_type = None
-            error = None
-            duplicate_of = None
-
-        reply = _format_result(MockResult())
+        reply = _format_result(
+            ProcessResult(
+                success=True,
+                document_id="fact-123",
+                fact_id="fact-123",
+                vendor="Shop",
+                amount="10.0",
+            )
+        )
         assert "Google Maps URL" in reply
         assert "/skip" in reply
 

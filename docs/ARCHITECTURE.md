@@ -34,19 +34,27 @@ Because items are identified down to barcode and brand level, the structured dat
                 Interfaces                    Service Layer           Core
                 ---------                     -------------           ----
             +-- CLI (Click)    --+
-            +-- FastAPI          -+
+            +-- FastAPI (:3100)  -+
             +-- MCP Tools        -+--->  Service Layer  --->  Pipeline Stages
-            +-- Telegram Bot     -+      (async boundary)    (sync internals)
-            +-- File Watcher   --+            |
-                                              v
+            +-- File Watcher   --+        (async boundary)    (sync internals)
+                  ^                            |
+                  | host.docker.internal       v
+            +-- Telegram Bot (thin HTTP client, container)
                                          Event Bus
                                               |
                                +--------------+--------------+
                                v              v              v
                          Obsidian Notes   Webhooks      Analytics Export
+
+            [ Datasette explorer ] --read-only snapshot--> alibi.db   (separate, :8001)
 ```
 
-All 5 interfaces route through the same service layer. The CLI and API are thin clients -- all business logic lives in `alibi/services/`.
+The CLI, MCP, and File Watcher call the service layer in-process; all business
+logic lives in `alibi/services/`. The **Telegram bot is a thin HTTP client** —
+it runs in its own container and forwards every request to the FastAPI service
+(`:3100`) over `host.docker.internal`, so it owns no DB/Ollama/pipeline. The
+**Datasette explorer** is a separate read-only interface serving a periodic
+WAL-safe snapshot of the database (it does not go through the service layer).
 
 ## Document-Agnostic Approach
 
@@ -340,8 +348,9 @@ The system learns from every correction to reduce future manual intervention:
 | **CLI** (`lt`) | Local operation, scripting, cron jobs |
 | **REST API** | Web dashboards, mobile apps, automation |
 | **MCP Server** | AI assistant integration (Claude, etc.) |
-| **Telegram Bot** | Mobile document capture, quick queries |
+| **Telegram Bot** | Mobile document capture, quick queries (thin API client, containerised) |
 | **File Watcher** | Drop-folder automation (inbox monitoring) |
+| **Datasette Explorer** | Read-only record listing/analysis over a DB snapshot (:8001) |
 
 ### OpenClaw Integration
 

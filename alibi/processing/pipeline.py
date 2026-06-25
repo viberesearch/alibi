@@ -1,6 +1,7 @@
 """Document processing pipeline."""
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -267,35 +268,105 @@ class ProcessingPipeline:
     # Phantom item names that card terminal slips produce
     _PHANTOM_ITEM_NAMES = {"PURCHASE", "PAYMENT", "SALE", "TOTAL"}
 
+    # Total/tax/cash summary lines (anchored at start of the name). Covers
+    # EN + Turkish (TOPLAM=total, KDV=VAT, TUTAR=amount, NAKIT=cash,
+    # KREDI=credit). Anchored so a real product merely containing "tax" stays.
+    #   + Russian: ИТОГО/ВСЕГО/СУММА=total, НДС=VAT, НАЛИЧНЫЕ=cash,
+    #   СДАЧА=change, ОПЛАТА/ПЛАТЕЖ=payment, КАРТА=card.
+    _JUNK_ITEM_RE = re.compile(
+        r"^\W*(?:TOPLAM|ARA\s*TOPLAM|TUTAR|KDV|TOTAL|SUB\s*-?\s*TOTAL|TAX|VAT|"
+        r"NAKIT|KRED[İI]|CASH|CHANGE|BALANCE|"
+        r"ИТОГО|ИТОГ|ВСЕГО|СУММА|НДС|НАЛИЧНЫЕ|СДАЧА|ОПЛАТА|ПЛАТЕЖ|КАРТА)\b",
+        re.IGNORECASE,
+    )
+
+    # Bank / terminal / card-network markers (matched ANYWHERE in the name).
+    # Real product names virtually never contain these, so an item like
+    # "TÜRKİYE BANKASI" or "ZIRAAT BANKASI Transaction" is a slip artifact.
+    _JUNK_ITEM_ANYWHERE_RE = re.compile(
+        r"\b(?:IBAN|RRN|BATCH|TERM[İI]NAL|[İI]SLEM|BANKAS[İI]|Z[İI]RAAT|"
+        r"ONAY\s*KODU|AUTH\s*CODE|\bPOS\b|\bVISA\b|MASTERCARD|MAESTRO)\b",
+        re.IGNORECASE,
+    )
+
+    # Card / cash payment markers in raw OCR text. Presence of these alongside
+    # no real items is the signal that a "receipt" is actually a payment slip.
+    #   Russian slips: ОПЛАТА/ПЛАТЁЖ=payment, КАРТА=card, ТЕРМИНАЛ=terminal,
+    #   КОД АВТОРИЗАЦИИ=auth code, МИР=Mir network, НАЛИЧНЫЕ=cash, СДАЧА=change.
+    _PAYMENT_SIGNAL_RE = re.compile(
+        r"AUTH\s*CODE|CARDHOLDER|MERCHANT COPY|GOODS OR SERVICES|\bRRN\b|"
+        r"BATCH\s*NO|payWave|\bVISA\b|MASTERCARD|MAESTRO|CONTACTLESS|TEMASS[İI]Z|"
+        r"TERM[İI]NAL|[İI]SLEM|KRED[İI]|\bNAKIT\b|\bCASH\b|"
+        r"ОПЛАТА|ПЛАТ[ЁЕ]Ж|КОД\s*АВТОРИЗАЦИИ|ТЕРМИНАЛ|\bКАРТА\b|\bМИР\b|"
+        r"НАЛИЧНЫЕ|СДАЧА",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _is_junk_item(name: str) -> bool:
+        """True if a line-item name is a card-slip / summary artifact, not a product.
+
+        Catches total/tax/bank lines, Turkish slip artifacts ending in '*'
+        (e.g. "TOPLAM *", "M.GIDA %05 *"), bank-text blobs dumped as one item,
+        and punctuation/number-only fragments (e.g. "*2.").
+        """
+        n = (name or "").strip()
+        if not n:
+            return True
+        if n.upper() in ProcessingPipeline._PHANTOM_ITEM_NAMES:
+            return True
+        if ProcessingPipeline._JUNK_ITEM_RE.search(n):
+            return True
+        if ProcessingPipeline._JUNK_ITEM_ANYWHERE_RE.search(n):
+            return True
+        if n.rstrip().endswith("*"):  # Turkish terminal-slip tax/total lines
+            return True
+        if len(n) > 50:  # whole bank slip dumped into one "item"
+            return True
+        # No run of real letters (e.g. "*2.", "* *") -> not a product name
+        if not re.search(r"[^\W\d_]{3,}", n):
+            return True
+        return False
+
     @staticmethod
     def _looks_like_payment_confirmation(extracted_data: dict[str, Any]) -> bool:
         """Check if extraction data looks like a payment confirmation.
 
-        Heuristic safety net: if the vision type detection classified a card
-        terminal slip as "receipt", the extraction will have no real line
-        items but will contain payment-specific fields (card_last4,
-        authorization_code, terminal_id).
+        Heuristic safety net: if vision/parser classified a card terminal slip
+        as "receipt", the extraction has no real line items (only total/tax/bank
+        artifacts) and shows card/cash payment signals -- either as structured
+        fields (card_last4, authorization_code, terminal_id, payment_method) or
+        as markers in the raw OCR text (AUTH CODE, VISA, TOPLAM/KREDI, etc.).
 
-        Returns True if the extraction appears to be a payment confirmation.
+        Rule: no real items + signs of card/cash payment => payment confirmation,
+        not a purchase.
         """
         if not extracted_data:
             return False
 
         line_items = extracted_data.get("line_items") or []
-        phantom_names = ProcessingPipeline._PHANTOM_ITEM_NAMES
         real_items = [
             item
             for item in line_items
-            if item.get("name", "").upper() not in phantom_names
+            if not ProcessingPipeline._is_junk_item(
+                item.get("name") or item.get("description") or ""
+            )
         ]
+        if real_items:
+            return False
 
         has_payment_details = bool(
             extracted_data.get("card_last4")
             or extracted_data.get("authorization_code")
             or extracted_data.get("terminal_id")
+            or extracted_data.get("payment_method")
+        )
+        raw_text = extracted_data.get("raw_text") or ""
+        has_payment_markers = bool(
+            ProcessingPipeline._PAYMENT_SIGNAL_RE.search(raw_text)
         )
 
-        return len(real_items) == 0 and has_payment_details
+        return has_payment_details or has_payment_markers
 
     @staticmethod
     def _looks_like_statement(extracted_data: dict[str, Any]) -> bool:
@@ -897,6 +968,20 @@ class ProcessingPipeline:
                 )
             except Exception as e:
                 logger.warning(f"Refiner failed for {file_path}: {e}")
+
+        # 2b. Alt-schema field normalization. The invoice schema uses
+        # issuer/amount/issue_date instead of vendor/total/date. The atom parser
+        # already maps these, but ProcessingResult/CLI/API/bot read
+        # extracted_data directly, so an invoice would otherwise display
+        # "Unknown / N/A". Surface the common fields here for all consumers.
+        if not extracted_data.get("vendor") and extracted_data.get("issuer"):
+            extracted_data["vendor"] = extracted_data["issuer"]
+        if extracted_data.get("total") in (None, "") and (
+            extracted_data.get("amount") is not None
+        ):
+            extracted_data["total"] = extracted_data["amount"]
+        if not extracted_data.get("date") and extracted_data.get("issue_date"):
+            extracted_data["date"] = extracted_data["issue_date"]
 
         # 3. Vendor canonicalization
         raw_vendor = extracted_data.get("vendor")

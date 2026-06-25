@@ -229,3 +229,20 @@ class TestEnrichPending:
         assert marker["unit_enriched"] is None
         second = enrich_pending_units(db, limit=50)
         assert {r.item_id for r in second} == {"d"}
+
+
+# ===========================================================================
+# TestSchema (constrained decoding)
+# ===========================================================================
+
+
+class TestSchema:
+    @patch("alibi.enrichment.units.call_enrichment_llm")
+    def test_constrains_decoding_with_schema(self, mock_llm):
+        # The response_format schema is what makes the local model unable to emit
+        # malformed JSON on garbled batches — assert it is passed through.
+        from alibi.enrichment.units import _RESPONSE_FORMAT
+
+        mock_llm.return_value = [{"idx": 1, "unit": "g", "unit_quantity": 1}]
+        infer_units([{"name": "a"}])
+        assert mock_llm.call_args.kwargs["response_format"] is _RESPONSE_FORMAT

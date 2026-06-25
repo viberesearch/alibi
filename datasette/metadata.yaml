@@ -1,0 +1,175 @@
+# Datasette metadata for the Alibi record explorer.
+#
+# Loaded via `datasette --metadata datasette/metadata.yaml`. Titles/descriptions
+# surface the data model; the canned queries under `alibi-explore` expose the
+# analyses Alibi's schema makes possible (cross-vendor comparable-unit-price
+# comparison, spend by vendor/category) without the user writing SQL.
+#
+# The database file is served as `alibi-explore` (the snapshot produced by
+# scripts/datasette_snapshot.sh), so all query references live under that key.
+
+title: Alibi Records Explorer
+description_html: |-
+  Read-only explorer over the Alibi document-intelligence database
+  (facts, line items, and the materialised <code>item_stars</code> analytics
+  surface). Snapshot — refreshed periodically from the live database.
+license: Private
+source: Alibi (local-first financial document intelligence)
+
+databases:
+  alibi-explore:
+    tables:
+      item_stars:
+        title: Item stars (analytics surface)
+        description: >-
+          One row per line item, denormalised with vendor, category,
+          comparable_name and comparable_unit_price — the unit of analysis.
+        sort_desc: event_date
+      facts:
+        title: Facts (confirmed transactions)
+        description: One row per confirmed transaction collapsed from a document.
+        sort_desc: event_date
+      fact_items:
+        title: Fact items (raw line items)
+        sort_desc: created_at
+      documents:
+        title: Documents (source uploads)
+        sort_desc: created_at
+
+    queries:
+      spend_by_vendor:
+        title: Spend by vendor (EUR)
+        description: >-
+          Total confirmed spend per vendor, normalised to EUR via each fact's
+          historical eur_rate (run `lt fx backfill`). A fact with no rate yet is
+          excluded rather than blended.
+        sql: |-
+          SELECT vendor,
+                 COUNT(*) AS transactions,
+                 ROUND(SUM(total_amount * eur_rate), 2) AS total_spend_eur
+          FROM facts
+          WHERE total_amount IS NOT NULL AND eur_rate IS NOT NULL
+          GROUP BY vendor
+          ORDER BY total_spend_eur DESC
+
+      spend_by_month:
+        title: Spend by month (EUR)
+        description: Confirmed spend per calendar month, normalised to EUR.
+        sql: |-
+          SELECT substr(event_date, 1, 7) AS month,
+                 COUNT(*) AS transactions,
+                 ROUND(SUM(total_amount * eur_rate), 2) AS total_spend_eur
+          FROM facts
+          WHERE event_date IS NOT NULL AND total_amount IS NOT NULL
+            AND eur_rate IS NOT NULL
+          GROUP BY month
+          ORDER BY month DESC
+
+      spend_by_category:
+        title: Spend by category (EUR)
+        description: Line-item spend grouped by enriched category, normalised to EUR.
+        sql: |-
+          SELECT COALESCE(NULLIF(category, ''), '(uncategorised)') AS category,
+                 COUNT(*) AS items,
+                 ROUND(SUM(total_price_eur), 2) AS total_spend_eur
+          FROM item_stars
+          WHERE total_price_eur IS NOT NULL
+          GROUP BY category
+          ORDER BY total_spend_eur DESC
+
+      comparable_price_compare:
+        title: Comparable unit price — cross-vendor (EUR)
+        description: >-
+          For each comparable product, every vendor's normalised price per
+          standard unit in EUR (EUR/kg, EUR/L, EUR/pcs). The core Alibi
+          comparison; foreign currencies are converted via the fact's historical
+          rate so vendors are directly comparable.
+        sql: |-
+          SELECT comparable_name,
+                 comparable_unit,
+                 vendor,
+                 ROUND(comparable_unit_price_eur, 4) AS comparable_unit_price_eur,
+                 event_date
+          FROM item_stars
+          WHERE comparable_name IS NOT NULL AND comparable_name != ''
+            AND comparable_unit_price_eur IS NOT NULL
+          ORDER BY comparable_name, comparable_unit, comparable_unit_price_eur
+
+      cheapest_vendor_per_product:
+        title: Cheapest vendor per comparable product (EUR)
+        description: The lowest EUR-normalised comparable unit price for each product.
+        sql: |-
+          SELECT comparable_name,
+                 comparable_unit,
+                 ROUND(MIN(comparable_unit_price_eur), 4) AS best_unit_price_eur,
+                 (SELECT s2.vendor FROM item_stars s2
+                    WHERE s2.comparable_name = s.comparable_name
+                      AND s2.comparable_unit = s.comparable_unit
+                      AND s2.comparable_unit_price_eur IS NOT NULL
+                    ORDER BY s2.comparable_unit_price_eur ASC LIMIT 1) AS cheapest_vendor
+          FROM item_stars s
+          WHERE comparable_name IS NOT NULL AND comparable_name != ''
+            AND comparable_unit_price_eur IS NOT NULL
+          GROUP BY comparable_name, comparable_unit
+          ORDER BY comparable_name
+
+      price_by_state:
+        title: Comparable unit price by product STATE
+        description: >-
+          For each comparable product, the normalised price per standard unit
+          broken down by preservation/preparation STATE (fresh / frozen / canned
+          / dried / cured / pickled / roasted / cooked — the #58 facet). Limited
+          to products that actually appear in MORE THAN ONE state, so each row is
+          a real comparison (fresh vs canned vs frozen artichokes; raw vs roasted
+          nuts). State is read from the attributes JSON via json_extract; rows are
+          grouped within (comparable_name, comparable_unit) so EUR/kg is never
+          blended with EUR/L or EUR/pcs.
+        sql: |-
+          WITH stated AS (
+            SELECT comparable_name,
+                   comparable_unit,
+                   json_extract(attributes, '$.state') AS state,
+                   comparable_unit_price_eur
+            FROM item_stars
+            WHERE comparable_name IS NOT NULL AND comparable_name != ''
+              AND comparable_unit_price_eur IS NOT NULL
+              AND json_extract(attributes, '$.state') IS NOT NULL
+          ),
+          multi_state AS (
+            SELECT comparable_name, comparable_unit
+            FROM stated
+            GROUP BY comparable_name, comparable_unit
+            HAVING COUNT(DISTINCT state) > 1
+          )
+          SELECT s.comparable_name,
+                 s.comparable_unit,
+                 s.state,
+                 COUNT(*)                                       AS items,
+                 ROUND(AVG(s.comparable_unit_price_eur), 4) AS avg_unit_price_eur,
+                 ROUND(MIN(s.comparable_unit_price_eur), 4) AS min_unit_price_eur,
+                 ROUND(MAX(s.comparable_unit_price_eur), 4) AS max_unit_price_eur
+          FROM stated s
+          JOIN multi_state m
+            ON s.comparable_name = m.comparable_name
+           AND s.comparable_unit = m.comparable_unit
+          GROUP BY s.comparable_name, s.comparable_unit, s.state
+          ORDER BY s.comparable_name, s.comparable_unit, avg_unit_price_eur
+
+      items_by_state:
+        title: Line items by product STATE
+        description: >-
+          Every priced line item that carries a STATE facet, with its state
+          column surfaced from the attributes JSON and its EUR-normalised price —
+          for browsing/filtering fresh vs canned vs frozen at the row level.
+        sql: |-
+          SELECT comparable_name,
+                 json_extract(attributes, '$.state') AS state,
+                 comparable_unit,
+                 ROUND(comparable_unit_price_eur, 4) AS comparable_unit_price_eur,
+                 vendor,
+                 event_date
+          FROM item_stars
+          WHERE comparable_name IS NOT NULL AND comparable_name != ''
+            AND comparable_unit_price_eur IS NOT NULL
+            AND json_extract(attributes, '$.state') IS NOT NULL
+          ORDER BY comparable_name, state, comparable_unit_price_eur

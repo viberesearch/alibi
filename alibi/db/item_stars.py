@@ -42,6 +42,18 @@ _INSERT_COLUMNS = (
     "country",
     "event_date",
     "event_time",
+    "total_price_eur",
+    "comparable_unit_price_eur",
+)
+
+# The fact's EUR conversion factor: its resolved ``eur_rate`` (set by
+# ``lt fx backfill``), or 1.0 for an EUR / currency-less fact even before any
+# backfill, or NULL for a not-yet-converted foreign fact (so its *_eur stays NULL
+# and it drops out of EUR-only aggregations rather than blending). Multiplying the
+# item's amounts by it here materialises the EUR figures the analytics sum.
+_EUR_FACTOR = (
+    "COALESCE(f.eur_rate, CASE WHEN COALESCE(f.currency, 'EUR') = 'EUR' "
+    "THEN 1.0 END)"
 )
 
 _SELECT_EXPR = (
@@ -50,7 +62,9 @@ _SELECT_EXPR = (
     "fi.category, fi.category_path, fi.comparable_unit_price, "
     "fi.comparable_unit, fi.product_variant, fi.attributes, "
     "f.fact_type, f.vendor, f.vendor_key, f.currency, f.country, "
-    "f.event_date, f.event_time"
+    "f.event_date, f.event_time, "
+    f"CAST(fi.total_price AS REAL) * {_EUR_FACTOR}, "
+    f"CAST(fi.comparable_unit_price AS REAL) * {_EUR_FACTOR}"
 )
 
 # Built from module constants only (no user input) -- safe despite S608.

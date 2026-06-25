@@ -30,7 +30,12 @@ from alibi.db.models import (
     CloudStatus,
 )
 from alibi.identities.matching import _strip_country_prefix
-from alibi.normalizers.vendors import normalize_vendor_slug
+from alibi.normalizers.currency import normalize_currency
+from alibi.normalizers.vendors import (
+    clean_registration,
+    is_payment_intermediary,
+    normalize_vendor_slug,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -41,6 +46,11 @@ _MIN_VENDOR_SUBSTRING = 4
 
 # Minimum SequenceMatcher ratio for fuzzy vendor_key match (OCR typo tolerance)
 _VENDOR_KEY_FUZZY_THRESHOLD = 0.85
+
+# Lower vendor_key ratio accepted as an OCR variant when the trade/legal names
+# also match exactly. Looser than the key-alone threshold because the matching
+# name is corroborating evidence; still high enough to reject unrelated keys.
+_VENDOR_KEY_NAME_CORROBORATED_THRESHOLD = 0.70
 
 # Maximum absolute difference for near-match amounts (OCR rounding tolerance)
 _AMOUNT_TOLERANCE = Decimal("0.02")
@@ -104,6 +114,8 @@ class BundleSummary:
     vendor: str | None = None
     vendor_normalized: str | None = None
     vendor_key: str | None = None
+    # vendor is a card acquirer / ATM, not the merchant
+    vendor_is_intermediary: bool = False
     vendor_legal_name: str | None = None
     vendor_legal_normalized: str | None = None
     amount: Decimal | None = None
@@ -249,15 +261,19 @@ def extract_bundle_summary(
             summary.vendor = data.get("name")
             if summary.vendor:
                 summary.vendor_normalized = normalize_vendor_name(summary.vendor)
+                summary.vendor_is_intermediary = is_payment_intermediary(summary.vendor)
             legal = data.get("legal_name")
             if legal and str(legal).strip():
                 summary.vendor_legal_name = str(legal).strip()
                 summary.vendor_legal_normalized = normalize_vendor_name(
                     summary.vendor_legal_name
                 )
-            reg = data.get("vat_number") or data.get("tax_id")
-            if reg and str(reg).strip():
-                summary.vendor_key = str(reg).strip().upper().replace(" ", "")
+            # A card slip's printed registration belongs to the acquirer, not
+            # the merchant — keeping it as the bundle's vendor_key would make it
+            # mismatch the receipt's real merchant VAT and veto a valid merge.
+            reg = clean_registration(data.get("vat_number") or data.get("tax_id"))
+            if reg and not summary.vendor_is_intermediary:
+                summary.vendor_key = reg.upper().replace(" ", "")
 
         elif atype == AtomType.AMOUNT.value or atype == AtomType.AMOUNT:
             if data.get("semantic_type") == "total":
@@ -265,7 +281,7 @@ def extract_bundle_summary(
                     summary.amount = Decimal(str(data["value"]))
                 except (InvalidOperation, ValueError, KeyError):
                     pass
-                summary.currency = data.get("currency", "EUR")
+                summary.currency = normalize_currency(data.get("currency", "EUR"))
 
         elif atype == AtomType.DATETIME.value or atype == AtomType.DATETIME:
             date_str = data.get("value", "")
@@ -345,6 +361,24 @@ def _score_match(
     if _time_conflict(new, existing):
         return Decimal("0"), CloudMatchType.VENDOR_DATE
 
+    # Same-type bundles (two receipts, two slips) beyond their date tolerance are
+    # DISTINCT transactions, never one purchase: a supermarket never issues one
+    # payment for several days' receipts, and two scans of one receipt share a
+    # date. Date is otherwise only a weighted bonus, so vendor+amount (0.7) would
+    # merge same-vendor/same-amount receipts from different days (e.g. a 3.00
+    # coffee bought weekly). _DATE_TOLERANCE already encodes the intent
+    # (BASKET↔BASKET = 0 days); enforce it as a veto here. Cross-type pairs
+    # (receipt↔slip) keep their wider asymmetric tolerance via scoring.
+    if (
+        new.bundle_type == existing.bundle_type
+        and new.event_date is not None
+        and existing.event_date is not None
+    ):
+        pair = (new.bundle_type, existing.bundle_type)
+        tol = _DATE_TOLERANCE.get(pair, _DEFAULT_DATE_TOLERANCE)
+        if abs((new.event_date - existing.event_date).days) > tol:
+            return Decimal("0"), CloudMatchType.VENDOR_DATE
+
     # Check for known false-positive pair (early exit)
     if db is not None and new.vendor_key and existing.vendor_key:
         try:
@@ -373,12 +407,18 @@ def _score_match(
         str(weight_adj.get("item_overlap", 1.0))
     )
 
-    # Vendor matching — required for cloud formation
+    # Vendor matching — required for cloud formation, EXCEPT when one side is a
+    # payment intermediary (a card slip prints the acquirer "JCC PAYMENT
+    # SYSTEMS", not the merchant). There the vendor name can never agree with
+    # the receipt's, so we drop the veto and let amount + date corroborate the
+    # receipt↔slip pair instead.
     vendor_score = _vendor_score(new, existing)
+    either_intermediary = new.vendor_is_intermediary or existing.vendor_is_intermediary
     if (
         vendor_score == Decimal("0")
         and new.vendor_normalized
         and existing.vendor_normalized
+        and not either_intermediary
     ):
         return Decimal("0"), CloudMatchType.VENDOR_DATE
     score += vendor_score * vendor_w
@@ -433,9 +473,24 @@ def _vendor_score(a: BundleSummary, b: BundleSummary) -> Decimal:
         similarity = SequenceMatcher(None, a.vendor_key, b.vendor_key).ratio()
         if similarity >= _VENDOR_KEY_FUZZY_THRESHOLD:
             return Decimal("0.9")
+        # Keys differ beyond plain typo tolerance. When the trade/legal names
+        # still match exactly AND the keys remain a *plausible* OCR variant
+        # (e.g. PAPAS "10355430K" vs "103055400K", ratio ~0.84), treat them as
+        # one merchant rather than vetoing — this is the dominant cause of one
+        # shop appearing as two rows. A genuinely different registration with a
+        # coincidentally identical name (ratio far below threshold) still fails.
+        if similarity >= _VENDOR_KEY_NAME_CORROBORATED_THRESHOLD and _vendor_name_score(
+            a, b
+        ) == Decimal("1"):
+            return Decimal("0.85")
         # Clearly different registration IDs = different vendors
         return Decimal("0")
 
+    return _vendor_name_score(a, b)
+
+
+def _vendor_name_score(a: BundleSummary, b: BundleSummary) -> Decimal:
+    """Score vendor match on trade/legal names alone (0, 0.8, or 1)."""
     # Collect all normalized names for each side (trade name + legal name)
     a_names = {n for n in (a.vendor_normalized, a.vendor_legal_normalized) if n}
     b_names = {n for n in (b.vendor_normalized, b.vendor_legal_normalized) if n}

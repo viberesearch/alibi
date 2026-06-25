@@ -92,6 +92,51 @@ class TestSpending:
         assert resp.status_code == 422
 
 
+class TestSpendingSummary:
+    """Tests for GET /api/v1/analytics/spending-summary (web Analytics tab)."""
+
+    def test_summary_shape(
+        self, client: TestClient, seeded_db: DatabaseManager
+    ) -> None:
+        resp = client.get("/api/v1/analytics/spending-summary")
+        assert resp.status_code == 200
+        data = resp.json()
+        # Exact keys the web UI's renderAnalytics() consumes.
+        for key in (
+            "total_spent",
+            "transaction_count",
+            "avg_basket_size",
+            "top_currency",
+            "by_category",
+            "by_vendor",
+        ):
+            assert key in data, key
+        assert isinstance(data["by_vendor"], list)
+        assert isinstance(data["by_category"], list)
+
+    def test_summary_totals_and_currency(
+        self, client: TestClient, seeded_db: DatabaseManager
+    ) -> None:
+        resp = client.get("/api/v1/analytics/spending-summary")
+        data = resp.json()
+        # Seeded: 5 EUR facts of 10,20,30,40,50 across 3 vendors.
+        assert data["transaction_count"] == 5
+        assert float(data["total_spent"]) == pytest.approx(150.0)
+        assert data["top_currency"] == "EUR"
+        # by_vendor sorted by total desc
+        totals = [v["total"] for v in data["by_vendor"]]
+        assert totals == sorted(totals, reverse=True)
+
+    def test_summary_with_dates(
+        self, client: TestClient, seeded_db: DatabaseManager
+    ) -> None:
+        resp = client.get(
+            "/api/v1/analytics/spending-summary"
+            "?date_from=2025-01-01&date_to=2025-03-01"
+        )
+        assert resp.status_code == 200
+
+
 class TestSubscriptions:
     """Tests for GET /api/v1/analytics/subscriptions."""
 

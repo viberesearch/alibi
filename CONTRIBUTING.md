@@ -51,6 +51,15 @@ uv run pytest tests/test_text_parser.py::TestReceiptParsing::test_basic_receipt 
 uv run pytest --ignore=tests/integration
 ```
 
+**Optional dependencies.** A plain `uv run pytest` is green without the optional
+extras installed: tests that exercise an optional-extra path
+(`gemini`/google-genai, vectordb/lancedb, PDF rendering/pdf2image) guard
+themselves with `pytest.importorskip(...)` / `skipif` and are reported as
+**skipped**, not failed — so a real regression in the installed suite is never
+masked by a missing extra. Install an extra (e.g. `uv sync --group dev --extra
+gemini`) to run those tests for real. The `tests/integration/` suite needs a
+running API (`lt serve`) and is excluded by the `--ignore` invocation above.
+
 ## Code Quality
 
 ```bash
@@ -91,11 +100,18 @@ alibi/
   predictions/      # MindsDB integration
   processing/       # Document pipeline, folder routing
   services/         # Service layer (facade over internal modules)
-  telegram/         # Telegram bot handlers
+  telegram/         # Telegram bot — thin API client (handlers + api_client/keystore/spool)
 tests/              # 145 test files, mirrors source structure
 data/               # Runtime data (gitignored, except examples)
 docs/               # Architecture and design documentation
+datasette/          # Datasette explorer metadata (canned queries)
+scripts/            # Ops scripts (datasette snapshot/run/refresh, etc.)
+docker/             # Container run helpers (thin Telegram bot)
 ```
+
+The Telegram bot and Datasette explorer are out-of-process: the bot forwards to
+the API over HTTP (it imports no `alibi.db`/`alibi.services`), and Datasette
+reads a read-only snapshot. The document pipeline below runs API-side only.
 
 ## Key Patterns
 

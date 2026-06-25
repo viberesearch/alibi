@@ -155,6 +155,28 @@ class TestParseExtraction:
         assert result.bundle is not None
         assert result.bundle.bundle_type == BundleType.BASKET
 
+    def test_junk_currency_normalized_at_source(self) -> None:
+        """An OCR'd '\\n' currency must not propagate to the atoms (it reached a
+        fact verbatim before); it normalizes to EUR for every money atom."""
+        raw = _receipt_extraction()
+        raw["currency"] = "\n"
+        result = parse_extraction(DOC_ID, raw)
+        money = [
+            a
+            for a in result.atoms
+            if a.atom_type in (AtomType.AMOUNT, AtomType.ITEM, AtomType.PAYMENT)
+        ]
+        assert money
+        assert all(a.data.get("currency") == "EUR" for a in money)
+
+    def test_greek_euro_currency_normalized(self) -> None:
+        raw = _receipt_extraction()
+        raw["currency"] = "ΕΥΡΩ"
+        result = parse_extraction(DOC_ID, raw)
+        amounts = [a for a in result.atoms if a.atom_type == AtomType.AMOUNT]
+        assert amounts
+        assert all(a.data.get("currency") == "EUR" for a in amounts)
+
     def test_receipt_bundle_atoms_link_all_atoms(self) -> None:
         result = parse_extraction(DOC_ID, _receipt_extraction())
         assert len(result.bundle_atoms) == len(result.atoms)
@@ -933,7 +955,7 @@ class TestMigration009:
         config = Config(db_path=tmp_path / "test.db")
         manager = DatabaseManager(config)
         manager.initialize()
-        assert manager.get_schema_version() == 44
+        assert manager.get_schema_version() == 45
         manager.close()
 
 

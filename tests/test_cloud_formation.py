@@ -334,6 +334,28 @@ class TestVendorScore:
         )
         assert _vendor_score(a, b) == Decimal("0")
 
+    def test_ocr_variant_vat_rescued_by_exact_name(self) -> None:
+        """Sub-fuzzy-threshold VAT variant + identical name = one merchant.
+
+        PAPAS "10355430K" vs "103055400K" has a SequenceMatcher ratio of ~0.84,
+        just under the 0.85 key-alone threshold, so without name corroboration
+        the same shop split into two vendor rows. With identical trade names it
+        is treated as an OCR variant (0.85), not vetoed.
+        """
+        a = BundleSummary(
+            bundle_id="a",
+            bundle_type=BundleType.BASKET,
+            vendor_normalized="papashypermarket",
+            vendor_key="10355430K",
+        )
+        b = BundleSummary(
+            bundle_id="b",
+            bundle_type=BundleType.BASKET,
+            vendor_normalized="papashypermarket",
+            vendor_key="103055400K",
+        )
+        assert _vendor_score(a, b) == Decimal("0.85")
+
 
 class TestAmountScore:
     def test_exact_match(self) -> None:
@@ -746,9 +768,67 @@ class TestTryCollapseMulti:
         assert result.fact is not None
         assert result.fact.vendor == "PAPAS"
         assert result.fact.total_amount == Decimal("85.69")
-        # Two payment atoms from two bundles
+        # The receipt and the card slip record the SAME 85.69 charge (card 7201),
+        # so the two payment atoms collapse to one merged entry that keeps the
+        # slip's auth_code — not a doubled "paid" total.
         assert result.fact.payments is not None
-        assert len(result.fact.payments) == 2
+        assert len(result.fact.payments) == 1
+        assert result.fact.payments[0]["card_last4"] == "7201"
+        assert result.fact.payments[0]["auth_code"] == "083646"
+
+    def test_merchant_vendor_wins_over_acquirer(self) -> None:
+        # Basket (real merchant) + payment slip whose vendor is the card
+        # acquirer. The collapsed fact must take the merchant's name, not the
+        # acquirer's, even when the acquirer bundle is listed first.
+        acquirer_slip = {
+            "bundle_id": "b2",
+            "bundle_type": "payment_record",
+            "atoms": [
+                {"atom_type": "vendor", "data": {"name": "JCC PAYMENT SYSTEMS"}},
+                {
+                    "atom_type": "amount",
+                    "data": {
+                        "value": "15.32",
+                        "currency": "EUR",
+                        "semantic_type": "total",
+                    },
+                },
+                {"atom_type": "datetime", "data": {"value": "2025-11-16 10:00"}},
+            ],
+        }
+        merchant_basket = {
+            "bundle_id": "b1",
+            "bundle_type": "basket",
+            "atoms": [
+                {
+                    "atom_type": "vendor",
+                    "data": {
+                        "name": "The Nut Cracker House",
+                        "vat_number": "10123167G",
+                    },
+                },
+                {
+                    "atom_type": "amount",
+                    "data": {
+                        "value": "15.32",
+                        "currency": "EUR",
+                        "semantic_type": "total",
+                    },
+                },
+                {"atom_type": "datetime", "data": {"value": "2025-11-16 09:58"}},
+                {
+                    "atom_type": "item",
+                    "id": "a1",
+                    "data": {"name": "Cashews", "total_price": "15.32"},
+                },
+            ],
+        }
+        cloud = Cloud(id="c1", status=CloudStatus.FORMING)
+        result = try_collapse(cloud, [acquirer_slip, merchant_basket])
+        assert result.collapsed
+        assert result.fact is not None
+        assert result.fact.vendor == "The Nut Cracker House"
+        assert result.fact.vendor_key == "10123167G"
 
     def test_weak_evidence_stays_forming(self) -> None:
         cloud = Cloud(id="c1", status=CloudStatus.FORMING)
@@ -1031,6 +1111,43 @@ class TestScoreMatchTimeGuard:
         assert score > Decimal("0.5")
 
 
+class TestScoreMatchDateVeto:
+    """Same-type bundles beyond their date tolerance are distinct transactions.
+
+    A supermarket never issues one payment for several days' receipts, so two
+    same-vendor/same-amount baskets on different days (e.g. a weekly 3.00 coffee)
+    must NOT merge — vendor+amount alone would otherwise clear the 0.5 threshold.
+    """
+
+    def test_different_day_baskets_vetoed(self) -> None:
+        # Same vendor + amount, 9 days apart, no times -> distinct purchases.
+        a = _basket("a", None, d="2026-02-22")
+        b = _basket("b", None, d="2026-03-03")
+        score, _ = _score_match(a, b)
+        assert score == Decimal("0")
+
+    def test_one_day_apart_baskets_vetoed(self) -> None:
+        # BASKET↔BASKET tolerance is 0 days; even one day apart is distinct.
+        a = _basket("a", None, d="2026-02-22")
+        b = _basket("b", None, d="2026-02-23")
+        score, _ = _score_match(a, b)
+        assert score == Decimal("0")
+
+    def test_same_day_baskets_merge(self) -> None:
+        # Two scans of one receipt (same day) still cluster.
+        a = _basket("a", None, d="2026-02-22")
+        b = _basket("b", None, d="2026-02-22")
+        score, _ = _score_match(a, b)
+        assert score > Decimal("0.5")
+
+    def test_cross_type_within_tolerance_not_vetoed(self) -> None:
+        # Receipt↔slip one day apart keeps its wider asymmetric tolerance.
+        a = _basket("a", None, d="2026-02-22", btype=BundleType.BASKET)
+        b = _basket("b", None, d="2026-02-23", btype=BundleType.PAYMENT_RECORD)
+        score, _ = _score_match(a, b)
+        assert score > Decimal("0.5")
+
+
 class TestExtractBundleSummaryTime:
     def test_parses_event_time(self) -> None:
         atoms = [
@@ -1045,3 +1162,106 @@ class TestExtractBundleSummaryTime:
         s = extract_bundle_summary("b1", BundleType.BASKET, atoms)
         assert s.event_date == date.fromisoformat("2025-12-29")
         assert s.event_time is None
+
+
+class TestPaymentSlipCrossKeyMerge:
+    """Prevention: a receipt and its card slip must cluster even when the slip
+    prints a card-acquirer vendor (different name AND registration), corroborated
+    by matching amount + date instead of vendor."""
+
+    def _receipt(self) -> BundleSummary:
+        return BundleSummary(
+            bundle_id="receipt",
+            bundle_type=BundleType.BASKET,
+            vendor="PAPAS HYPERMARKET",
+            vendor_normalized="papashypermarket",
+            vendor_key="103055400K",
+            amount=Decimal("9.31"),
+            event_date=date(2025, 11, 27),
+        )
+
+    def test_acquirer_slip_merges_with_receipt(self) -> None:
+        acquirer_slip = BundleSummary(
+            bundle_id="slip",
+            bundle_type=BundleType.PAYMENT_RECORD,
+            vendor="JCC PAYMENT SYSTEMS",
+            vendor_normalized="jccpaymentsystems",
+            vendor_is_intermediary=True,
+            amount=Decimal("9.31"),
+            event_date=date(2025, 11, 27),
+            cloud_id="cloud-1",
+        )
+        result = find_cloud_for_bundle(self._receipt(), [acquirer_slip])
+        assert not result.is_new_cloud
+        assert result.cloud_id == "cloud-1"
+        assert result.confidence > Decimal("0.5")
+
+    def test_acquirer_slip_does_not_merge_on_amount_mismatch(self) -> None:
+        """The intermediary veto-skip still requires real corroboration: a slip
+        with a different amount must not be swept into the cloud on date alone."""
+        acquirer_slip = BundleSummary(
+            bundle_id="slip",
+            bundle_type=BundleType.PAYMENT_RECORD,
+            vendor="JCC PAYMENT SYSTEMS",
+            vendor_normalized="jccpaymentsystems",
+            vendor_is_intermediary=True,
+            amount=Decimal("42.00"),
+            event_date=date(2025, 11, 27),
+            cloud_id="cloud-1",
+        )
+        result = find_cloud_for_bundle(self._receipt(), [acquirer_slip])
+        assert result.is_new_cloud
+
+    def test_non_intermediary_different_vendor_still_vetoed(self) -> None:
+        """Two real but different merchants on the same day/amount stay split —
+        the veto-skip applies only to payment intermediaries."""
+        other = BundleSummary(
+            bundle_id="other",
+            bundle_type=BundleType.PAYMENT_RECORD,
+            vendor="LIDL",
+            vendor_normalized="lidl",
+            amount=Decimal("9.31"),
+            event_date=date(2025, 11, 27),
+            cloud_id="cloud-1",
+        )
+        result = find_cloud_for_bundle(self._receipt(), [other])
+        assert result.is_new_cloud
+
+
+class TestIntermediaryBundleSummary:
+    """Prevention: an acquirer's printed registration must not become the
+    bundle's vendor_key (it is not the merchant's VAT)."""
+
+    def test_acquirer_vendor_flagged_and_key_suppressed(self) -> None:
+        atoms = [
+            {
+                "atom_type": "vendor",
+                "data": {"name": "JCC PAYMENT SYSTEMS", "tax_id": "10370773Q"},
+            },
+        ]
+        s = extract_bundle_summary("slip", BundleType.PAYMENT_RECORD, atoms)
+        assert s.vendor_is_intermediary is True
+        assert s.vendor_key is None
+
+    def test_merchant_vendor_keeps_key(self) -> None:
+        atoms = [
+            {
+                "atom_type": "vendor",
+                "data": {"name": "PAPAS HYPERMARKET", "tax_id": "103055400K"},
+            },
+        ]
+        s = extract_bundle_summary("receipt", BundleType.BASKET, atoms)
+        assert s.vendor_is_intermediary is False
+        assert s.vendor_key == "103055400K"
+
+    def test_literal_null_tax_id_not_a_key(self) -> None:
+        """A literal 'null'/'N/A' VAT must not become a vendor_key."""
+        for sentinel in ("null", "NULL", "N/A", "-", "none"):
+            atoms = [
+                {
+                    "atom_type": "vendor",
+                    "data": {"name": "SOME SHOP", "tax_id": sentinel},
+                },
+            ]
+            s = extract_bundle_summary("b", BundleType.BASKET, atoms)
+            assert s.vendor_key is None, sentinel

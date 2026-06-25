@@ -50,8 +50,14 @@ _SIZED_UNITS = {
 }
 
 # Sanity ceiling: a normalised unit price above this almost certainly comes from
-# a corrupt total_price (OCR garble), not a real product. We refuse to write it.
-_MAX_PLAUSIBLE_UNIT_PRICE = Decimal("1000")
+# a corrupt total_price (OCR garble), not a real product, so we refuse to write
+# it. Calibrated against the live data: genuine items top out around 390 EUR/L
+# (small-package cosmetics) and 125 EUR/kg (loose premium tea), while OCR-garble
+# outliers land in the thousands (5000-9900). 200 sits comfortably above the
+# everyday grocery range and rejects the gross outliers early, at the enrichment
+# layer, instead of relying on after-the-fact remediation. Lowering this only
+# blocks NEW writes above the ceiling; it never deletes a price already stored.
+_MAX_PLAUSIBLE_UNIT_PRICE = Decimal("200")
 
 
 @dataclass

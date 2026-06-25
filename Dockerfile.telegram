@@ -1,0 +1,39 @@
+# Thin Telegram bot image.
+#
+# The bot is a stateless HTTP client of the host Alibi API (`lt serve`, :3100).
+# It owns no DB, no Ollama, no pipeline -- so this image installs only aiogram +
+# httpx (+ the few light libs alibi.config needs), never torch/lancedb/pyzbar.
+# See docs/TELEGRAM_THIN_BOT_PLAN.md.
+#
+# Build (from repo root):
+#   docker build -f Dockerfile.telegram -t alibi-telegram-bot .
+# Run: see docker-compose.telegram.yml.
+
+FROM python:3.12-slim
+
+# uv for fast, reproducible installs.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Dependency layer (cached): minimal thin-bot runtime only.
+COPY docker/telegram-requirements.txt ./telegram-requirements.txt
+RUN uv pip install --system --no-cache -r telegram-requirements.txt
+
+# Application code. Only the alibi package is needed on PYTHONPATH; the bot is
+# launched as a module, so no project install (and no base deps) is required.
+COPY alibi/ alibi/
+
+# Non-root user; /data holds the mounted keystore + spool volume.
+RUN groupadd -r alibi && useradd -r -g alibi -d /app alibi \
+    && mkdir -p /data \
+    && chown -R alibi:alibi /app /data
+USER alibi
+
+# Default wiring: reach the host API over OrbStack/Docker's host gateway and
+# persist the telegram_id -> api_key keystore on the mounted volume.
+ENV ALIBI_API_URL=http://host.docker.internal:3100 \
+    ALIBI_TELEGRAM_KEYSTORE=/data/telegram_keys.json \
+    PYTHONUNBUFFERED=1
+
+CMD ["python", "-m", "alibi.telegram.main"]

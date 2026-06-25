@@ -157,6 +157,17 @@ _PERIOD_EXPR = {
 }
 
 
+# Keep-condition for "real product" rows: excludes non-product receipt lines
+# (tax, tip, fee, discount, deposit, totals, "non_item") that the categorize pass
+# files under the taxonomy's ``adjustment`` branch and the broad-category pass
+# marks ``Non_Item``. They are receipt adjustments, not basket spend, so spend
+# composition leaves them out.
+_PRODUCT_ONLY_PREDICATE = (
+    "(category_path IS NULL OR category_path NOT LIKE 'adjustment%') "
+    "AND COALESCE(category, '') != 'Non_Item'"
+)
+
+
 def _build_filters(filters: dict[str, Any] | None) -> tuple[list[str], list[Any]]:
     """Translate the A-axis filter dict into WHERE conditions over item_stars.
 
@@ -344,8 +355,10 @@ def avg_comparable_price(
         group_cols = [*group_cols, ("comparable_unit", "comparable_unit")]
 
     conditions, params = _build_filters(filters)
-    conditions.append("comparable_unit_price IS NOT NULL")
-    conditions.append("CAST(comparable_unit_price AS REAL) > 0")
+    # Average over the EUR-normalised price so cross-currency comparison is valid;
+    # a non-EUR row not yet converted (NULL *_eur) drops out rather than blending.
+    conditions.append("comparable_unit_price_eur IS NOT NULL")
+    conditions.append("comparable_unit_price_eur > 0")
 
     select_parts = [f"{expr} AS {alias}" for alias, expr in group_cols]
     group_exprs = [expr for _, expr in group_cols]
@@ -354,9 +367,9 @@ def avg_comparable_price(
 
     sql = (
         f"SELECT {', '.join(select_parts)}, "  # noqa: S608
-        "AVG(CAST(comparable_unit_price AS REAL)) AS avg_comparable_unit_price, "
-        "MIN(CAST(comparable_unit_price AS REAL)) AS min_comparable_unit_price, "
-        "MAX(CAST(comparable_unit_price AS REAL)) AS max_comparable_unit_price, "
+        "AVG(comparable_unit_price_eur) AS avg_comparable_unit_price, "
+        "MIN(comparable_unit_price_eur) AS min_comparable_unit_price, "
+        "MAX(comparable_unit_price_eur) AS max_comparable_unit_price, "
         "COUNT(*) AS item_count, "
         "COUNT(DISTINCT vendor_key) AS vendor_count "
         f"FROM item_stars WHERE {where} "
@@ -364,6 +377,71 @@ def avg_comparable_price(
         "ORDER BY item_count DESC"
     )
     rows = db.fetchall(sql, tuple(params))
+    return [dict(row) for row in rows]
+
+
+def price_by_state(
+    db: DatabaseManager,
+    filters: dict[str, Any] | None = None,
+    min_states: int = 2,
+) -> list[dict[str, Any]]:
+    """Compare comparable_unit_price across product STATE, within a product.
+
+    The analytics answer the #58 state facet makes possible: for a single
+    comparable product, how its normalised price differs by preservation /
+    preparation form -- fresh vs canned vs frozen artichokes, raw vs roasted
+    nuts, fresh vs smoked salmon. ``state`` is read from the ``attributes`` JSON
+    (``$.state``), the same facet ``attr:state`` groups on.
+
+    Unlike a plain ``avg_comparable_price(group_by=["attr:state"])`` this is
+    scoped to a real *comparison*: only products that actually appear in at least
+    ``min_states`` distinct states (within one ``comparable_unit`` + currency) are
+    returned, so every row sits beside a sibling state to compare against. As
+    everywhere, EUR/kg is never blended with EUR/L or EUR/pcs (the grouping key
+    always carries ``comparable_unit``), and NULL / non-positive prices are
+    excluded. Filters compose with the standard A axes.
+
+    Returns one row per (comparable_name, comparable_unit, state, currency) with
+    avg / min / max comparable_unit_price and item_count, ordered so a product's
+    states sit together cheapest-first.
+    """
+    conditions, params = _build_filters(filters)
+    conditions.append("comparable_name IS NOT NULL")
+    conditions.append("comparable_name != ''")
+    conditions.append("comparable_unit_price_eur IS NOT NULL")
+    conditions.append("comparable_unit_price_eur > 0")
+    conditions.append("json_extract(attributes, '$.state') IS NOT NULL")
+    where = " AND ".join(conditions)
+
+    # CTEs: project the stated rows once, find the products with >= min_states
+    # distinct states, then aggregate per state but only for those products. The
+    # price is the EUR-normalised one so fresh-vs-canned compares across currency.
+    sql = (
+        "WITH stated AS ("  # noqa: S608 - conditions are trusted internal literals
+        "  SELECT comparable_name, comparable_unit, currency, "
+        "         json_extract(attributes, '$.state') AS state, "
+        "         comparable_unit_price_eur AS cup "
+        "  FROM item_stars "
+        f"  WHERE {where}"
+        "), multi AS ("
+        "  SELECT comparable_name, comparable_unit, currency "
+        "  FROM stated "
+        "  GROUP BY comparable_name, comparable_unit, currency "
+        "  HAVING COUNT(DISTINCT state) >= ?"
+        ") "
+        "SELECT s.comparable_name, s.comparable_unit, s.state, s.currency, "
+        "       COUNT(*) AS item_count, "
+        "       AVG(s.cup) AS avg_comparable_unit_price, "
+        "       MIN(s.cup) AS min_comparable_unit_price, "
+        "       MAX(s.cup) AS max_comparable_unit_price "
+        "FROM stated s "
+        "JOIN multi m ON s.comparable_name = m.comparable_name "
+        "  AND s.comparable_unit IS m.comparable_unit "
+        "  AND s.currency IS m.currency "
+        "GROUP BY s.comparable_name, s.comparable_unit, s.state, s.currency "
+        "ORDER BY s.comparable_name, s.comparable_unit, avg_comparable_unit_price"
+    )
+    rows = db.fetchall(sql, (*params, int(min_states)))
     return [dict(row) for row in rows]
 
 
@@ -388,8 +466,8 @@ def price_trend(
 
     merged = {**(filters or {}), "comparable_name": comparable_name}
     conditions, params = _build_filters(merged)
-    conditions.append("comparable_unit_price IS NOT NULL")
-    conditions.append("CAST(comparable_unit_price AS REAL) > 0")
+    conditions.append("comparable_unit_price_eur IS NOT NULL")
+    conditions.append("comparable_unit_price_eur > 0")
     where = " AND ".join(conditions)
 
     period_expr = _PERIOD_EXPR[period]
@@ -402,7 +480,7 @@ def price_trend(
 
     sql = (
         f"SELECT {', '.join(select_parts)}, "  # noqa: S608
-        "AVG(CAST(comparable_unit_price AS REAL)) AS avg_comparable_unit_price, "
+        "AVG(comparable_unit_price_eur) AS avg_comparable_unit_price, "
         "COUNT(*) AS item_count "
         f"FROM item_stars WHERE {where} "
         f"GROUP BY {', '.join(group_exprs)} "
@@ -422,8 +500,12 @@ def basket_composition(
     ``by`` is one of the group dimensions (default ``category``; ``category_path``
     groups by the full hierarchical path, ``brand``/``vendor`` etc. also work).
     Returns one row per group with item_count and total_spent (sum of
-    total_price), ordered by spend. Rows with a NULL group key are folded into
+    total_price_eur), ordered by spend. Rows with a NULL group key are folded into
     an "(uncategorised)" bucket so totals reconcile.
+
+    Non-product receipt lines (tax / tip / fee / discount / deposit / "non_item")
+    are EXCLUDED: a basket's spend is what you bought, not the receipt's
+    adjustments. See :data:`_PRODUCT_ONLY_PREDICATE`.
     """
     if by in _GROUP_DIMENSIONS:
         expr = _GROUP_DIMENSIONS[by]
@@ -433,11 +515,15 @@ def basket_composition(
         raise ValueError(f"Unknown composition dimension: {by}")
 
     conditions, params = _build_filters(filters)
+    conditions.append(_PRODUCT_ONLY_PREDICATE)
     where = " AND ".join(conditions)
+    # Spend is summed in EUR (total_price_eur) so categories never blend foreign
+    # amounts as if 1 CAD == 1 EUR. A not-yet-converted foreign row is NULL and
+    # simply doesn't contribute to its category's EUR spend.
     sql = (
         f"SELECT COALESCE({expr}, '(uncategorised)') AS {by}, "  # noqa: S608
         "COUNT(*) AS item_count, "
-        "SUM(CAST(total_price AS REAL)) AS total_spent "
+        "SUM(total_price_eur) AS total_spent "
         f"FROM item_stars WHERE {where} "
         f"GROUP BY COALESCE({expr}, '(uncategorised)') "
         "ORDER BY total_spent DESC"

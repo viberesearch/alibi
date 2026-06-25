@@ -10,6 +10,7 @@ Rules:
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -30,7 +31,14 @@ from alibi.db.models import (
 )
 from alibi.clouds.dedup import select_item_atoms
 from alibi.extraction.historical import make_vendor_key
-from alibi.normalizers.vendors import normalize_vendor_slug
+from alibi.normalizers.currency import normalize_currency
+from alibi.normalizers.vendors import (
+    clean_registration,
+    is_payment_intermediary,
+    normalize_vendor_slug,
+)
+
+_MERCHANT_BUNDLE_TYPES = {BundleType.BASKET.value, BundleType.INVOICE.value}
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -58,8 +66,19 @@ _NON_PRODUCT_PATTERNS = [
     re.compile(r"^Subtotal$", re.IGNORECASE),  # subtotal line
 ]
 _NON_PRODUCT_KEYWORDS = {"discount", "coupon"}
-# Exact-match totals (Greek + English OCR variants)
-_TOTAL_LINE_NAMES = {"total", "σynoao", "σynοδο", "συνολο", "σύνολο"}
+# Exact-match totals (Greek + English + Russian OCR variants:
+# ИТОГО/ВСЕГО/СУММА/ИТОГ = total/sum)
+_TOTAL_LINE_NAMES = {
+    "total",
+    "σynoao",
+    "σynοδο",
+    "συνολο",
+    "σύνολο",
+    "итого",
+    "итог",
+    "всего",
+    "сумма",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +167,11 @@ def _collapse_single(cloud: Cloud, bundle: dict[str, Any]) -> CollapseResult:
     event_date = _extract_date(atoms)
     event_time = _extract_time(atoms)
     payments = _extract_payments(atoms)
-    items = _extract_items(atoms, currency)
+    # Tag atoms with their (single) bundle so identical item lines on the same
+    # receipt — e.g. four "Activia 1.80" lines — are kept as distinct purchases
+    # and not collapsed by the cross-bundle de-duplicator.
+    bundle_id = bundle.get("bundle_id")
+    items = _extract_items(_tag_bundle(atoms, bundle_id), currency)
 
     registration = _extract_vendor_registration(atoms)
     vendor_key = make_vendor_key(registration, vendor)
@@ -202,7 +225,11 @@ def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResu
         all_atoms.extend(b.get("atoms", []))
 
     # Check: do we have corroborating evidence?
-    vendor = _extract_vendor(all_atoms)
+    # Prefer the real merchant's vendor over a card-acquirer name when a basket/
+    # invoice and a payment slip are merged (e.g. "The Nut Cracker House" wins
+    # over "JCC PAYMENT SYSTEMS").
+    vendor_atoms = _ordered_vendor_atoms(bundles)
+    vendor = _extract_vendor(vendor_atoms)
     totals = _extract_all_totals(all_atoms)
     payment_amounts = _extract_payment_amounts(all_atoms)
     event_date = _extract_date(all_atoms)
@@ -246,8 +273,13 @@ def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResu
     # items: pick item atoms from non-duplicate bundles only.
     item_atoms = select_item_atoms(bundles)
     items = _extract_items(item_atoms, currency)
+    # Note: select_item_atoms already drops duplicate-photo bundles and stamps
+    # each surviving atom with its source "_bundle_id", so _extract_items can
+    # keep within-bundle repeats while still collapsing any residual cross-bundle
+    # duplicates.
     fact_type = infer_fact_type(bundles)
-    registration = _extract_vendor_registration(all_atoms)
+    # Registration follows the same merchant-first ordering as the vendor name.
+    registration = _extract_vendor_registration(vendor_atoms)
     vendor_key = make_vendor_key(registration, vendor)
 
     fact = Fact(
@@ -280,6 +312,32 @@ def _collapse_multi(cloud: Cloud, bundles: list[dict[str, Any]]) -> CollapseResu
 # ---------------------------------------------------------------------------
 
 
+def _ordered_vendor_atoms(bundles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Concatenate bundle atoms, real-merchant bundles first.
+
+    Ranks bundles so _extract_vendor / _extract_vendor_registration pick the
+    real merchant's identity rather than a card acquirer's: a non-intermediary
+    vendor on a basket/invoice ranks first, then any non-intermediary vendor,
+    then anything with a vendor, then the rest.
+    """
+
+    def rank(b: dict[str, Any]) -> int:
+        v = _extract_vendor(b.get("atoms", []))
+        if not v:
+            return 3
+        intermediary = is_payment_intermediary(v)
+        if not intermediary and b.get("bundle_type") in _MERCHANT_BUNDLE_TYPES:
+            return 0
+        if not intermediary:
+            return 1
+        return 2
+
+    atoms: list[dict[str, Any]] = []
+    for b in sorted(bundles, key=rank):
+        atoms.extend(b.get("atoms", []))
+    return atoms
+
+
 def _extract_vendor(atoms: list[dict[str, Any]]) -> str | None:
     """Extract vendor name from atom list."""
     for atom in atoms:
@@ -296,9 +354,9 @@ def _extract_vendor_registration(atoms: list[dict[str, Any]]) -> str | None:
         atype = atom.get("atom_type", "")
         if atype == AtomType.VENDOR.value or atype == AtomType.VENDOR:
             data = atom.get("data", {})
-            reg: str | None = data.get("vat_number") or data.get("tax_id")
-            if reg and reg.strip():
-                return reg.strip()
+            reg = clean_registration(data.get("vat_number") or data.get("tax_id"))
+            if reg:
+                return reg
     return None
 
 
@@ -346,11 +404,11 @@ def _extract_payment_amounts(atoms: list[dict[str, Any]]) -> list[Decimal]:
 
 
 def _extract_currency(atoms: list[dict[str, Any]]) -> str:
-    """Extract currency from atom list."""
+    """Extract currency from atom list, normalized to an ISO code."""
     for atom in atoms:
         data = atom.get("data", {})
         if "currency" in data:
-            return str(data["currency"])
+            return normalize_currency(str(data["currency"]))
     return "EUR"
 
 
@@ -416,7 +474,76 @@ def _extract_payments(atoms: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 payment["change_due"] = data["change_due"]
             if payment:
                 payments.append(payment)
-    return payments
+    return _dedupe_payments(payments)
+
+
+def _payment_amount(p: dict[str, Any]) -> Decimal | None:
+    """Parse a payment entry's amount to Decimal, or None if unparseable."""
+    try:
+        return Decimal(str(p["amount"]))
+    except (KeyError, TypeError, InvalidOperation):
+        return None
+
+
+def _is_cashlike(p: dict[str, Any]) -> bool:
+    """True if a payment entry looks like a cash tender (not a card charge)."""
+    method = str(p.get("method") or "").lower()
+    if any(w in method for w in ("cash", "nakit", "μετρητ")):
+        return True
+    return "amount_tendered" in p or "change_due" in p
+
+
+def _same_charge(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two payment entries describe the same real charge.
+
+    Same charge => same amount AND compatible card_last4 (equal or one absent)
+    AND not an obvious cash-vs-card pairing. This keeps genuine split payments
+    (different amounts, or different cards, or cash+card of equal value) apart
+    while folding the receipt+slip duplicate of one charge together.
+    """
+    aa, ba = _payment_amount(a), _payment_amount(b)
+    if aa is None or ba is None or aa != ba:
+        return False
+    la, lb = a.get("card_last4"), b.get("card_last4")
+    if la and lb and la != lb:
+        return False
+    if _is_cashlike(a) != _is_cashlike(b):
+        return False
+    return True
+
+
+def _merge_payment(base: dict[str, Any], other: dict[str, Any]) -> dict[str, Any]:
+    """Union two same-charge payment entries, filling gaps in base from other."""
+    merged = dict(base)
+    for key, value in other.items():
+        if merged.get(key) in (None, ""):
+            merged[key] = value
+    return merged
+
+
+def _dedupe_payments(payments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse duplicate observations of the same charge across bundles.
+
+    When a receipt and its own payment slip collapse into one fact, each
+    contributes a payment atom for the SAME charge -- e.g. the receipt's
+    {"method": "kredi karti", "amount": "1424.9"} and the slip's
+    {"method": "credit card", "card_last4": "7201", "amount": "1424.9"}.
+    Left as-is they double the reported "paid" total and trip the reconcile
+    "paid != total" flag. We merge same-charge entries (preferring the one that
+    carries card_last4) while preserving genuine split/partial payments.
+    """
+    kept: list[dict[str, Any]] = []
+    for payment in payments:
+        match = next((i for i, k in enumerate(kept) if _same_charge(k, payment)), None)
+        if match is None:
+            kept.append(dict(payment))
+            continue
+        base, other = kept[match], payment
+        # Keep the richer card-bearing entry as the base.
+        if not base.get("card_last4") and other.get("card_last4"):
+            base, other = other, base
+        kept[match] = _merge_payment(base, other)
+    return kept
 
 
 def _clean_item_name(name: str, item: FactItem) -> str:
@@ -439,9 +566,19 @@ def _clean_item_name(name: str, item: FactItem) -> str:
     return name.strip()
 
 
+def _tag_bundle(atoms: list[dict[str, Any]], bundle_id: Any) -> list[dict[str, Any]]:
+    """Return shallow copies of ``atoms`` each tagged with its source bundle id.
+
+    Used so :func:`_deduplicate_items` can tell within-bundle repeats (kept)
+    from cross-bundle duplicates (merged).
+    """
+    return [{**a, "_bundle_id": bundle_id} for a in atoms]
+
+
 def _extract_items(atoms: list[dict[str, Any]], currency: str) -> list[FactItem]:
     """Extract and denormalize item atoms into FactItem objects."""
     items = []
+    item_bundles: list[Any] = []
     for atom in atoms:
         atype = atom.get("atom_type", "")
         if atype != AtomType.ITEM.value and atype != AtomType.ITEM:
@@ -531,12 +668,22 @@ def _extract_items(atoms: list[dict[str, Any]], currency: str) -> list[FactItem]
             item.name_normalized = cleaned_name
 
         items.append(item)
+        item_bundles.append(atom.get("_bundle_id"))
 
-    # Filter non-product lines (discounts, annotations, metadata)
-    items = _filter_non_product_items(items)
+    # Filter non-product lines (discounts, annotations, metadata), keeping the
+    # parallel bundle-id list in sync.
+    kept = [
+        (it, bid)
+        for it, bid in zip(items, item_bundles)
+        if not _is_non_product_item(it)
+    ]
+    items = [it for it, _ in kept]
+    item_bundles = [bid for _, bid in kept]
 
-    # Deduplicate items with identical name+price (from overlapping document groups)
-    items = _deduplicate_items(items)
+    # Collapse duplicate item lines that come from DIFFERENT bundles (the same
+    # receipt scanned twice). Repeats WITHIN one bundle are genuine multiple
+    # purchases and are preserved.
+    items = _deduplicate_items(items, item_bundles)
 
     return items
 
@@ -581,30 +728,50 @@ def _item_metadata_score(item: FactItem) -> int:
     return score
 
 
-def _deduplicate_items(items: list[FactItem]) -> list[FactItem]:
-    """Remove duplicate items with identical name+price+quantity.
+def _deduplicate_items(
+    items: list[FactItem],
+    bundle_ids: list[Any] | None = None,
+) -> list[FactItem]:
+    """Collapse cross-bundle duplicate items, preserving within-bundle repeats.
 
-    When two bundles carry the same receipt content (different file hashes,
-    same content), cloud formation correctly matches them but collapse
-    creates duplicate fact_items. Keep the one with most metadata.
+    When two bundles carry the same receipt content (the same receipt scanned
+    twice, merged into one cloud), collapse would otherwise emit duplicate
+    fact_items. But a single receipt legitimately lists the same product on
+    several lines — four "Activia 1.80" lines are four purchases, not one.
+
+    ``bundle_ids`` is a parallel list giving each item's source bundle. For a
+    given (name, price, quantity) the true count is the MAXIMUM number of copies
+    seen in any single bundle: duplicate-photo bundles replicate the same
+    per-bundle multiset (so the max, not the sum, is correct), while repeats
+    within one bundle are kept. When ``bundle_ids`` is omitted each item is
+    treated as its own bundle, so identical items collapse to one (legacy
+    behaviour for callers without bundle context).
     """
-    groups: dict[tuple[str, Decimal | None, Decimal | None], list[FactItem]] = {}
-    for item in items:
+    if bundle_ids is None:
+        bundle_ids = [object() for _ in items]
+
+    groups: dict[
+        tuple[str, Decimal | None, Decimal | None], list[tuple[FactItem, Any]]
+    ] = {}
+    for item, bid in zip(items, bundle_ids):
         key = (
             (item.name or "").lower().strip(),
             item.total_price,
             item.quantity,
         )
-        groups.setdefault(key, []).append(item)
+        groups.setdefault(key, []).append((item, bid))
 
     result = []
     for group in groups.values():
         if len(group) == 1:
-            result.append(group[0])
-        else:
-            # Keep the item with the most metadata
-            best = max(group, key=_item_metadata_score)
-            result.append(best)
+            result.append(group[0][0])
+            continue
+        # True count = the most copies seen in any single bundle.
+        per_bundle: Counter[Any] = Counter(bid for _, bid in group)
+        true_count = max(per_bundle.values())
+        # Keep the richest-metadata copies up to that count.
+        ranked = sorted((it for it, _ in group), key=_item_metadata_score, reverse=True)
+        result.extend(ranked[:true_count])
     return result
 
 

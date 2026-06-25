@@ -1,4 +1,9 @@
-"""Correction command handlers for inline fact and vendor corrections."""
+"""Correction command handlers — thin client over the host API.
+
+``/fix`` edits a fact (vendor/amount/date), ``/barcode`` sets a barcode on a
+fact item, and ``/merge`` merges two vendor identities. All route through the
+host API; the bot holds no DB.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +16,8 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from alibi.db.connection import get_db
-from alibi.services import correction, identity
+from alibi.telegram.api_client import AlibiAPIError
+from alibi.telegram.handlers._common import api_key_for, client
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -62,7 +67,6 @@ async def fix_handler(message: Message) -> None:
         await message.answer("Usage: /fix [fact_id] <vendor|amount|date> <value>")
         return
 
-    # Everything after "/fix"
     raw = message.text.split(maxsplit=1)
     if len(raw) < 2:
         await message.answer("Usage: /fix [fact_id] <vendor|amount|date> <value>")
@@ -70,7 +74,6 @@ async def fix_handler(message: Message) -> None:
 
     parts = raw[1].split()
 
-    # Determine fact_id and where the field/value start
     fact_id: str | None
     if parts and _looks_like_id(parts[0]):
         fact_id = parts[0]
@@ -91,66 +94,59 @@ async def fix_handler(message: Message) -> None:
 
     field = field_parts[0].lower()
     value = " ".join(field_parts[1:])
+    api_key = api_key_for(message)
 
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized. Please run 'lt init' first.")
+    if field not in ("vendor", "amount", "date"):
+        await message.answer(
+            f"Unknown field: {field!r}. Supported fields: vendor, amount, date."
+        )
         return
 
-    # Fetch existing fact to show old values in confirmation
-    from alibi.db.v2_store import get_fact_by_id
-
-    existing_fact = get_fact_by_id(db, fact_id)
-
-    if field == "vendor":
-        old_vendor = (existing_fact or {}).get("vendor", "Unknown")
-        ok = correction.correct_vendor(db, fact_id, value)
-        if ok:
-            await message.answer(
-                f"Vendor updated: {old_vendor} -> {value}\n" f"Fact ID: `{fact_id}`",
-                parse_mode="Markdown",
-            )
-        else:
-            await message.answer(f"Fact not found: `{fact_id}`", parse_mode="Markdown")
-
-    elif field == "amount":
+    # Validate amount/date before any round-trip.
+    if field == "amount":
         try:
-            amount = Decimal(value)
+            Decimal(value)
         except InvalidOperation:
             await message.answer(f"Invalid amount: {value!r}")
             return
-        old_amount = (existing_fact or {}).get("total_amount", "N/A")
-        ok = correction.update_fact(db, fact_id, {"amount": amount})
-        if ok:
-            await message.answer(
-                f"Amount updated: {old_amount} -> {amount}\n" f"Fact ID: `{fact_id}`",
-                parse_mode="Markdown",
-            )
-        else:
-            await message.answer(f"Fact not found: `{fact_id}`", parse_mode="Markdown")
-
     elif field == "date":
-        # Basic format validation before handing to the service layer.
-        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-        if not date_pattern.match(value):
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", value):
             await message.answer(
                 f"Invalid date format: {value!r}. Expected YYYY-MM-DD."
             )
             return
-        old_date = (existing_fact or {}).get("event_date", "N/A")
-        ok = correction.update_fact(db, fact_id, {"date": value})
-        if ok:
-            await message.answer(
-                f"Date updated: {old_date} -> {value}\n" f"Fact ID: `{fact_id}`",
-                parse_mode="Markdown",
-            )
-        else:
-            await message.answer(f"Fact not found: `{fact_id}`", parse_mode="Markdown")
 
-    else:
+    # Fetch existing fact to show old values in the confirmation.
+    try:
+        existing = await client.get_fact(fact_id, api_key=api_key)
+    except AlibiAPIError:
+        existing = None
+
+    try:
+        if field == "vendor":
+            old = (existing or {}).get("vendor", "Unknown")
+            ok = await client.correct_vendor(fact_id, value, api_key=api_key)
+            label = "Vendor"
+        elif field == "amount":
+            old = (existing or {}).get("total_amount", "N/A")
+            ok = await client.update_fact(fact_id, {"amount": value}, api_key=api_key)
+            label = "Amount"
+        else:  # date
+            old = (existing or {}).get("event_date", "N/A")
+            ok = await client.update_fact(fact_id, {"date": value}, api_key=api_key)
+            label = "Date"
+    except AlibiAPIError:
+        logger.exception("Failed to apply /fix to %s", fact_id)
+        await message.answer("Could not apply the fix. Please try again.")
+        return
+
+    if ok:
         await message.answer(
-            f"Unknown field: {field!r}. Supported fields: vendor, amount, date."
+            f"{label} updated: {old} -> {value}\nFact ID: `{fact_id}`",
+            parse_mode="Markdown",
         )
+    else:
+        await message.answer(f"Fact not found: `{fact_id}`", parse_mode="Markdown")
 
 
 _ITEM_ID_RE = re.compile(r"Item ID: `([^`]+)`")
@@ -186,16 +182,11 @@ async def barcode_handler(message: Message) -> None:
 
     parts = raw[1].split()
 
-    # Determine item_id and barcode value
     item_id: str | None
     if len(parts) >= 2 and _looks_like_id(parts[0]):
         item_id = parts[0]
         barcode_value = parts[1]
-    elif len(parts) == 1:
-        item_id = _extract_item_id_from_reply(message)
-        barcode_value = parts[0]
     else:
-        # Two+ parts, first doesn't look like ID — try reply context
         item_id = _extract_item_id_from_reply(message)
         barcode_value = parts[0]
 
@@ -205,7 +196,6 @@ async def barcode_handler(message: Message) -> None:
         )
         return
 
-    # Validate barcode format (EAN-8, EAN-13, UPC-A, or similar)
     if not re.match(r"^\d{7,14}$", barcode_value):
         await message.answer(
             f"Invalid barcode format: {barcode_value!r}. "
@@ -213,12 +203,15 @@ async def barcode_handler(message: Message) -> None:
         )
         return
 
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized. Please run 'lt init' first.")
+    try:
+        ok = await client.update_line_item(
+            item_id, {"barcode": barcode_value}, api_key=api_key_for(message)
+        )
+    except AlibiAPIError:
+        logger.exception("Failed to set barcode on %s", item_id)
+        await message.answer("Could not set barcode. Please try again.")
         return
 
-    ok = correction.update_fact_item(db, item_id, {"barcode": barcode_value})
     if ok:
         await message.answer(
             f"Barcode set.\nItem ID: `{item_id}`\nBarcode: {barcode_value}",
@@ -246,17 +239,16 @@ async def merge_handler(message: Message) -> None:
         await message.answer("Usage: /merge <identity_id_a> <identity_id_b>")
         return
 
-    identity_id_a = parts[1]
-    identity_id_b = parts[2]
+    identity_id_a, identity_id_b = parts[1], parts[2]
+    api_key = api_key_for(message)
 
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized. Please run 'lt init' first.")
+    try:
+        ident_a = await client.get_identity(identity_id_a, api_key=api_key)
+        ident_b = await client.get_identity(identity_id_b, api_key=api_key)
+    except AlibiAPIError:
+        logger.exception("Failed to look up identities for /merge")
+        await message.answer("Could not look up identities. Please try again.")
         return
-
-    # Look up both identities to show names
-    ident_a = identity.get_identity(db, identity_id_a)
-    ident_b = identity.get_identity(db, identity_id_b)
 
     if not ident_a or not ident_b:
         missing = []
@@ -265,7 +257,7 @@ async def merge_handler(message: Message) -> None:
         if not ident_b:
             missing.append(f"B: `{identity_id_b}`")
         await message.answer(
-            f"Identity not found:\n" + "\n".join(missing),
+            "Identity not found:\n" + "\n".join(missing),
             parse_mode="Markdown",
         )
         return
@@ -273,7 +265,6 @@ async def merge_handler(message: Message) -> None:
     name_a = ident_a.get("name") or identity_id_a
     name_b = ident_b.get("name") or identity_id_b
 
-    # Store pending merge
     chat_id = message.chat.id
     _pending_merges[chat_id] = (identity_id_a, identity_id_b, time.time())
 
@@ -301,12 +292,15 @@ async def merge_confirm_handler(message: Message) -> None:
         await message.answer("Merge confirmation expired. Please run /merge again.")
         return
 
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized.")
+    try:
+        ok = await client.merge_identities(
+            identity_id_a, identity_id_b, api_key=api_key_for(message)
+        )
+    except AlibiAPIError:
+        logger.exception("Merge failed")
+        await message.answer("Merge failed. Please try again.")
         return
 
-    ok = identity.merge_vendors(db, identity_id_a, identity_id_b)
     if ok:
         await message.answer(
             f"Identities merged.\n"

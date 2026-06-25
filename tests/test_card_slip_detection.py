@@ -411,6 +411,24 @@ class TestLooksLikePaymentConfirmation:
             }
         )
 
+    def test_russian_card_slip_raw_text(self):
+        """A Russian card slip (no real items) with Cyrillic payment markers."""
+        assert ProcessingPipeline._looks_like_payment_confirmation(
+            {
+                "line_items": [],
+                "raw_text": "ОПЛАТА КАРТА МИР\nКОД АВТОРИЗАЦИИ 123456\nИТОГО 540 ₽",
+            }
+        )
+
+    def test_russian_phantom_total_item(self):
+        """A Russian total line as a phantom item alongside card details."""
+        assert ProcessingPipeline._looks_like_payment_confirmation(
+            {
+                "line_items": [{"name": "ИТОГО"}, {"name": "ОПЛАТА"}],
+                "card_last4": "0000",
+            }
+        )
+
 
 class TestVisionTypeMap:
     """Test the _VISION_TYPE_MAP class attribute."""
@@ -429,3 +447,74 @@ class TestVisionTypeMap:
 
     def test_other_not_in_map(self):
         assert "other" not in ProcessingPipeline._VISION_TYPE_MAP
+
+
+class TestTurkishCardSlipReclassification:
+    """Card terminal slips (esp. Turkish) misclassified as receipts.
+
+    Regression for the case where the only "line items" are total/tax/bank
+    artifacts (e.g. "TOPLAM *", "M.GIDA %05 *", "TÜRKİYE BANKASI") and the
+    structured card fields may be absent -- the slip must still be detected
+    as a payment confirmation from the raw-text payment markers.
+    """
+
+    def test_junk_total_tax_items_are_not_real(self):
+        for junk in [
+            "TOPLAM   *346,00",
+            "KDV   *",
+            "M.GIDA   %05 *",
+            "TÜRKİYE BANKASI",
+            "ZIRAAT BANKASI Transaction",
+            "*2.",
+            "Ziraat Bankası T.C. ISYERI: 00000000695548 POS:01 BATCH NO:001523",
+        ]:
+            assert ProcessingPipeline._is_junk_item(junk), junk
+
+    def test_real_products_are_not_junk(self):
+        for real in ["Milk", "EKMEK", "Soft Facial Tissue", "Sugar 1kg", "Red Bull"]:
+            assert not ProcessingPipeline._is_junk_item(real), real
+
+    def test_turkish_slip_no_card_fields_reclassified_via_raw_text(self):
+        """No real items + AUTH/VISA/TOPLAM in raw text -> payment confirmation."""
+        extraction = {
+            "vendor": "RAMIS GUNGOR",
+            "currency": "TRY",
+            "line_items": [
+                {"name": "T.GIDA %00 *"},
+                {"name": "KDV *"},
+                {"name": "TOPLAM *346,00"},
+            ],
+            "raw_text": (
+                "RAMIS GUNGOR\nTOPLAM *346,00\nKREDI *346,00\nSALE\n"
+                "VISA/kredi\nAMOUNT 346,00 TL\nAUTH CODE:736464\n"
+                "CARDHOLDER COPY\nGOODS OR SERVICES RECEIVED"
+            ),
+        }
+        assert ProcessingPipeline._looks_like_payment_confirmation(extraction)
+
+    def test_turkish_slip_with_bank_name_item_reclassified(self):
+        extraction = {
+            "vendor": "PETEK PASTANESI",
+            "currency": "TRY",
+            "payment_method": "card",
+            "line_items": [{"name": "TÜRKİYE BANKASI"}],
+            "raw_text": "SATIŞ\nVISA\nBATCH NO: 000147\nKART HAMİLİ NÜSHASI",
+        }
+        assert ProcessingPipeline._looks_like_payment_confirmation(extraction)
+
+    def test_real_receipt_with_card_footer_stays_receipt(self):
+        """Grocery receipt with real products + card footer is NOT a payment."""
+        extraction = {
+            "vendor": "FRESKO",
+            "line_items": [
+                {"name": "Milk", "total_price": 2.5},
+                {"name": "Bread", "total_price": 1.8},
+            ],
+            "raw_text": "FRESKO\nVISA payWave\nAUTH CODE 123\nTOPLAM 4.30",
+            "card_last4": "1234",
+        }
+        assert not ProcessingPipeline._looks_like_payment_confirmation(extraction)
+
+    def test_itemless_without_payment_signal_not_reclassified(self):
+        extraction = {"line_items": [], "raw_text": "just some random text"}
+        assert not ProcessingPipeline._looks_like_payment_confirmation(extraction)

@@ -9,6 +9,12 @@ import pytest
 
 os.environ["ALIBI_TESTING"] = "1"
 
+# These tests exercise the Gemini cloud path and patch google.genai.Client, which
+# requires the optional google-genai extra (uninstalled by default). Skip the
+# whole module when it is absent so a plain `pytest` run is green and a real
+# regression in the installed suite is not masked.
+pytest.importorskip("google.genai")
+
 from alibi.enrichment.gemini_enrichment import (
     EnrichmentBatchResponse,
     GeminiEnrichmentResult,

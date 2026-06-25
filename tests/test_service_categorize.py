@@ -9,9 +9,11 @@ os.environ["ALIBI_TESTING"] = "1"
 
 from alibi.enrichment import taxonomy
 from alibi.enrichment.categorize import (
+    apply_keyword_categories,
     enrich_items,
     enrich_pending_categories,
     infer_categories,
+    match_keyword_category,
 )
 
 # ---------------------------------------------------------------------------
@@ -277,3 +279,110 @@ class TestEnrichPending:
             again = enrich_pending_categories(db, limit=50)
         assert {r.item_id for r in again} == {"b1"}
         mock_llm.assert_called_once()
+
+
+# ===========================================================================
+# TestKeywordGuard (deterministic pre-pass)
+# ===========================================================================
+
+
+class TestKeywordGuard:
+    def test_matches_coffee_variants(self):
+        for name in (
+            "COFFEE BEANS 250G",
+            "Espresso Roast",
+            "Lavazza CAPPUCCINO mix",
+            "ΚΑΦΕΣ ΕΛΛΗΝΙΚΟΣ",  # Greek "coffee"
+            "Кофе молотый",  # Russian "coffee"
+        ):
+            assert (
+                match_keyword_category({"name": name})
+                == "food > beverages > coffee_tea"
+            ), name
+
+    def test_matches_tea_variants(self):
+        for name in (
+            "GREEN TEA 20 BAGS",
+            "Chai Latte mix",
+            "Matcha powder",
+            "ΤΣΑΙ ΒΟΥΝΟΥ",  # Greek "tea"
+            "Чай чёрный",  # Russian "tea"
+        ):
+            assert (
+                match_keyword_category({"name": name})
+                == "food > beverages > coffee_tea"
+            ), name
+
+    def test_no_false_positives(self):
+        # Words that contain the substrings but aren't coffee/tea.
+        for name in ("STEAK", "TEAM PHOTO", "WATERMELON", "CHAIR", "TEASPOON SET"):
+            assert match_keyword_category({"name": name}) is None, name
+
+    def test_matches_on_comparable_name(self):
+        item = {"name": "ΦΡΑΠΕ", "comparable_name": "coffee"}
+        assert match_keyword_category(item) == "food > beverages > coffee_tea"
+
+    def test_empty_item_returns_none(self):
+        assert match_keyword_category({}) is None
+        assert match_keyword_category({"name": ""}) is None
+
+    def test_apply_writes_back_and_partitions(self, db):
+        _seed_fact_item(db, "k1", "COFFEE BEANS 1KG")
+        _seed_fact_item(db, "k2", "MYSTERY WIDGET")
+        rows = db.fetchall(
+            "SELECT id, name, name_normalized, comparable_name, brand "
+            "FROM fact_items"
+        )
+        matched, remaining = apply_keyword_categories(db, rows)
+        assert {r.item_id for r in matched} == {"k1"}
+        assert {r["id"] for r in remaining} == {"k2"}
+        row = db.fetchone(
+            "SELECT category_path, category, enrichment_source, "
+            "category_taxonomy_version FROM fact_items WHERE id = 'k1'"
+        )
+        assert row["category_path"] == "food > beverages > coffee_tea"
+        assert row["category"] == "Coffee_Tea"
+        assert row["enrichment_source"] == "keyword_category"
+        assert row["category_taxonomy_version"] == taxonomy.TAXONOMY_VERSION
+
+    @patch("alibi.extraction.structurer.structure_ocr_text")
+    def test_pending_resolves_keyword_without_llm(self, mock_llm, db):
+        # A coffee item is categorised deterministically; the LLM is only called
+        # for the non-keyword item.
+        mock_llm.return_value = {"items": [{"idx": 1, "category_path": "household"}]}
+        _seed_fact_item(db, "c1", "ESPRESSO BEANS")
+        _seed_fact_item(db, "h1", "DISH SOAP")
+        results = enrich_pending_categories(db, limit=50)
+        by_id = {r.item_id: r for r in results}
+        assert by_id["c1"].category_path == "food > beverages > coffee_tea"
+        # The LLM batch contained only the non-keyword item.
+        prompt = mock_llm.call_args.kwargs.get("emphasis_prompt", "")
+        assert "DISH SOAP" in prompt
+        assert "ESPRESSO" not in prompt
+
+    @patch("alibi.extraction.structurer.structure_ocr_text")
+    def test_keyword_item_not_rescanned(self, mock_llm, db):
+        _seed_fact_item(db, "c2", "COFFEE GROUND 200G")
+        first = enrich_pending_categories(db, limit=50)
+        assert any(r.item_id == "c2" and r.success for r in first)
+        mock_llm.reset_mock()
+        second = enrich_pending_categories(db, limit=50)
+        assert second == []
+        mock_llm.assert_not_called()
+
+
+# ===========================================================================
+# TestSchema (constrained decoding)
+# ===========================================================================
+
+
+class TestSchema:
+    @patch("alibi.enrichment.categorize.call_enrichment_llm")
+    def test_constrains_decoding_with_schema(self, mock_llm):
+        # The response_format schema is what makes the local model unable to emit
+        # malformed JSON on garbled batches — assert it is passed through.
+        from alibi.enrichment.categorize import _RESPONSE_FORMAT
+
+        mock_llm.return_value = [{"idx": 1, "category_path": "household"}]
+        infer_categories([{"name": "a"}])
+        assert mock_llm.call_args.kwargs["response_format"] is _RESPONSE_FORMAT

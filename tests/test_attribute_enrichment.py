@@ -250,3 +250,20 @@ class TestEnrichPending:
         second = enrich_pending_attributes(db, limit=50)
         assert second == []
         mock_llm.assert_not_called()
+
+
+# ===========================================================================
+# TestSchema (constrained decoding)
+# ===========================================================================
+
+
+class TestSchema:
+    @patch("alibi.enrichment.attributes.call_enrichment_llm")
+    def test_constrains_decoding_with_schema(self, mock_llm):
+        # The response_format schema is what makes the local model unable to emit
+        # malformed JSON on garbled batches — assert it is passed through.
+        from alibi.enrichment.attributes import _RESPONSE_FORMAT
+
+        mock_llm.return_value = [{"idx": 1, "attributes": {}, "pack_count": None}]
+        infer_attributes([{"name": "a"}])
+        assert mock_llm.call_args.kwargs["response_format"] is _RESPONSE_FORMAT

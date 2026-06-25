@@ -1,10 +1,13 @@
-"""Telegram barcode scanning handler — detect barcodes from photos."""
+"""Telegram barcode scanning handler — thin client over the host API.
+
+Barcode detection (pyzbar) and product lookup live on the host. The bot
+forwards the photo bytes to ``POST /items/barcode/scan`` and renders the
+result; the inline buttons forward enrich / lookup actions to the host.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import io
-import json
 import logging
 
 from aiogram import F, Router
@@ -18,12 +21,8 @@ from aiogram.types import (
     Message,
 )
 
-from alibi.db.connection import DatabaseManager, get_db
-from alibi.extraction.barcode_detector import (
-    BarcodeResult,
-    detect_barcodes,
-    has_barcode_support,
-)
+from alibi.telegram.api_client import AlibiAPIError
+from alibi.telegram.handlers._common import api_key_for, client
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -43,6 +42,15 @@ def _esc(text: str) -> str:
     for ch in ("_", "*", "`", "["):
         text = text.replace(ch, f"\\{ch}")
     return text
+
+
+def _api_key_for_callback(callback: CallbackQuery) -> str | None:
+    """Resolve the acting user's API key from a callback query."""
+    from alibi.telegram.keystore import get_keystore
+
+    if callback.from_user:
+        return get_keystore().get(callback.from_user.id)
+    return None
 
 
 async def _download_photo(message: Message) -> bytes | None:
@@ -69,15 +77,7 @@ async def scan_handler(message: Message) -> None:
         - Send a photo with /scan as caption
         - Reply to a photo with /scan
     """
-    if not has_barcode_support():
-        await message.answer(
-            "Barcode scanning not available — pyzbar library not installed."
-        )
-        return
-
-    # Try to get photo from: 1) this message, 2) replied-to message
     photo_data: bytes | None = None
-
     if message.photo:
         photo_data = await _download_photo(message)
     elif message.reply_to_message and message.reply_to_message.photo:
@@ -92,27 +92,34 @@ async def scan_handler(message: Message) -> None:
     await message.chat.do(ChatAction.TYPING)
     status_msg = await message.answer("Scanning for barcodes...")
 
-    # Run detection in thread to avoid blocking
-    results: list[BarcodeResult] = await asyncio.to_thread(detect_barcodes, photo_data)
+    try:
+        body = await client.scan_barcode(
+            photo_data, "scan.jpg", api_key=api_key_for(message)
+        )
+    except AlibiAPIError as exc:
+        if str(exc).startswith("503"):
+            await status_msg.edit_text("Barcode scanning not available on the server.")
+        else:
+            logger.exception("Barcode scan failed")
+            await status_msg.edit_text("Scan failed. Please try again.")
+        return
 
-    if not results:
+    barcodes = body.get("barcodes", [])
+    if not barcodes:
         await status_msg.edit_text("No barcodes detected in this image.")
         return
 
-    # Clean up status message before sending results
     try:
         await status_msg.delete()
     except Exception:
         pass
 
-    # Look up each barcode
-    db = get_db()
-    for result in results:
-        text = f"*Barcode detected:* `{result.data}`\nType: {result.type}"
+    for result in barcodes:
+        data = result.get("data", "")
+        text = f"*Barcode detected:* `{data}`\nType: {result.get('type', '?')}"
 
-        if result.valid_ean:
-            # Look up in product cache
-            product = _lookup_product(db, result.data)
+        if result.get("valid_ean"):
+            product = result.get("product")
             if product:
                 text += (
                     f"\n\n*Product found:*\n"
@@ -122,94 +129,52 @@ async def scan_handler(message: Message) -> None:
                 )
             else:
                 text += "\n\nProduct not in local cache."
-
             text += "\n\nEAN check digit: valid"
         else:
             text += "\n\nNot a valid EAN barcode."
 
-        # Inline keyboard: Enrich items with this barcode
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text="Enrich matching items",
-                        callback_data=ScanAction(
-                            action="enrich", barcode=result.data
-                        ).pack(),
+                        callback_data=ScanAction(action="enrich", barcode=data).pack(),
                     ),
                     InlineKeyboardButton(
                         text="Look up product",
-                        callback_data=ScanAction(
-                            action="lookup", barcode=result.data
-                        ).pack(),
+                        callback_data=ScanAction(action="lookup", barcode=data).pack(),
                     ),
                 ]
             ]
         )
-
         await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
-
-
-def _lookup_product(db: DatabaseManager, barcode: str) -> dict[str, str] | None:
-    """Look up barcode in product_cache table."""
-    row = db.fetchone(
-        "SELECT data FROM product_cache WHERE barcode = ?",
-        (barcode,),
-    )
-    if not row:
-        return None
-    try:
-        data: dict[str, object] = json.loads(row["data"])
-        if data.get("_not_found"):
-            return None
-        tags = data.get("categories_tags")
-        category = (
-            ", ".join(str(t) for t in tags[:3])  # type: ignore[index]
-            if isinstance(tags, list) and tags
-            else ""
-        )
-        return {
-            "product_name": str(data.get("product_name", "")),
-            "brand": str(data.get("brands", "")),
-            "category": category,
-        }
-    except (json.JSONDecodeError, TypeError):
-        return None
 
 
 @router.callback_query(ScanAction.filter(F.action == "enrich"))
 async def handle_enrich(callback: CallbackQuery, callback_data: ScanAction) -> None:
-    """Handle 'enrich matching items' button — run barcode enrichment."""
-    db = get_db()
+    """Handle 'enrich matching items' button — run barcode enrichment on the host."""
     barcode = callback_data.barcode
+    try:
+        result = await client.enrich_by_barcode(
+            barcode, api_key=_api_key_for_callback(callback)
+        )
+    except AlibiAPIError:
+        logger.exception("enrich-by-barcode failed for %s", barcode)
+        await callback.answer("Enrichment failed", show_alert=True)
+        return
 
-    from alibi.enrichment.service import enrich_item
-
-    # Find all fact_items with this barcode that haven't been enriched
-    rows = db.fetchall(
-        "SELECT id FROM fact_items "
-        "WHERE barcode = ? AND (brand IS NULL OR brand = '')",
-        (barcode,),
-    )
-
-    if not rows:
+    matched = result.get("matched", 0)
+    enriched = result.get("enriched", 0)
+    if matched == 0:
         await callback.answer(
-            f"No unenriched items found with barcode {barcode}",
-            show_alert=True,
+            f"No unenriched items found with barcode {barcode}", show_alert=True
         )
         return
 
-    enriched = 0
-    for row in rows:
-        result = await asyncio.to_thread(enrich_item, db, row["id"], barcode)
-        if result.success:
-            enriched += 1
-
     msg = callback.message
     if isinstance(msg, Message):
-        original = msg.text or ""
         await msg.edit_text(
-            original + f"\n\nEnriched {enriched}/{len(rows)} items",
+            (msg.text or "") + f"\n\nEnriched {enriched}/{matched} items",
             reply_markup=None,
             parse_mode="Markdown",
         )
@@ -218,16 +183,15 @@ async def handle_enrich(callback: CallbackQuery, callback_data: ScanAction) -> N
 
 @router.callback_query(ScanAction.filter(F.action == "lookup"))
 async def handle_lookup(callback: CallbackQuery, callback_data: ScanAction) -> None:
-    """Handle 'look up product' button — fetch from Open Food Facts."""
+    """Handle 'look up product' button — fetch from Open Food Facts via the host."""
     barcode = callback_data.barcode
-
-    from alibi.enrichment.off_client import lookup_barcode
-
     await callback.answer("Looking up product...")
 
     try:
-        product = await asyncio.to_thread(lookup_barcode, barcode)
-    except Exception:
+        product = await client.barcode_lookup(
+            barcode, api_key=_api_key_for_callback(callback)
+        )
+    except AlibiAPIError:
         logger.exception("OFF lookup failed for %s", barcode)
         await callback.answer("Lookup failed", show_alert=True)
         return
@@ -245,18 +209,14 @@ async def handle_lookup(callback: CallbackQuery, callback_data: ScanAction) -> N
         if isinstance(categories, list) and categories:
             cleaned = [str(c).replace("en:", "") for c in categories[:5]]
             text += f"Categories: {', '.join(cleaned)}"
-
-        original = msg.text or ""
         await msg.edit_text(
-            original + "\n\n" + text,
+            (msg.text or "") + "\n\n" + text,
             reply_markup=None,
             parse_mode="Markdown",
         )
     elif isinstance(msg, Message):
-        original = msg.text or ""
         await msg.edit_text(
-            original + "\n\nProduct not found in Open Food Facts.",
+            (msg.text or "") + "\n\nProduct not found in Open Food Facts.",
             reply_markup=None,
             parse_mode="Markdown",
         )
-    await callback.answer()

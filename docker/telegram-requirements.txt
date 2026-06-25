@@ -1,0 +1,14 @@
+# Minimal runtime for the THIN Telegram bot container.
+#
+# The thin bot is an HTTP client of the host API: it imports only
+# alibi.telegram.* + alibi.config + alibi.utils.map_url, none of which touch the
+# DB, Ollama, OCR or the pipeline. So the image installs aiogram + httpx and the
+# few light libs config needs -- NOT fastapi/uvicorn/pdfplumber/pillow/torch/
+# lancedb/pyzbar. Keep these lower bounds in sync with pyproject.toml.
+aiogram>=3.28.0
+httpx>=0.28.1
+pydantic>=2.13.0
+pydantic-settings>=2.14.0
+python-dotenv>=1.2.2
+click>=8.4.1
+rich>=15.0.0

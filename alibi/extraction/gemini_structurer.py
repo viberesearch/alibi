@@ -143,12 +143,70 @@ class StatementLineExtraction(BaseModel):
     transactions: list[LineItemExtraction] = []
 
 
+class BatchItemExtraction(BaseModel):
+    """Superset of all per-doc-type fields for batch extraction.
+
+    The batch response mixes document types, so a single typed model carries
+    every field any of the per-type models (Receipt/Invoice/Payment/Statement)
+    can produce. Using a concrete model instead of a free-form ``dict`` keeps
+    the JSON schema free of ``additionalProperties``, which the Gemini Developer
+    API rejects. The LLM populates only the fields relevant to each document.
+    """
+
+    # Vendor / issuer / bank identity
+    vendor: str | None = None
+    vendor_address: str | None = None
+    vendor_phone: str | None = None
+    vendor_website: str | None = None
+    vendor_vat: str | None = None
+    vendor_tax_id: str | None = None
+    issuer: str | None = None
+    issuer_address: str | None = None
+    issuer_phone: str | None = None
+    issuer_website: str | None = None
+    issuer_vat: str | None = None
+    issuer_tax_id: str | None = None
+    customer: str | None = None
+    bank: str | None = None
+    account_number: str | None = None
+    # Dates / identifiers
+    date: str | None = Field(default=None, description="YYYY-MM-DD")
+    time: str | None = Field(default=None, description="HH:MM or HH:MM:SS")
+    issue_date: str | None = None
+    due_date: str | None = None
+    statement_date: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    document_id: str | None = None
+    invoice_number: str | None = None
+    # Money
+    subtotal: float | None = None
+    tax: float | None = None
+    total: float | None = None
+    amount: float | None = None
+    opening_balance: float | None = None
+    closing_balance: float | None = None
+    currency: str | None = None
+    # Payment
+    payment_method: str | None = None
+    card_type: str | None = None
+    card_last4: str | None = None
+    authorization_code: str | None = None
+    terminal_id: str | None = None
+    merchant_id: str | None = None
+    payment_terms: str | None = None
+    language: str | None = None
+    # Line items / transactions
+    line_items: list[LineItemExtraction] = []
+    transactions: list[LineItemExtraction] = []
+
+
 class BatchDocumentExtraction(BaseModel):
     """Wrapper for batch extraction — each document indexed by position."""
 
     idx: int
     document_type: str | None = None
-    extraction: dict[str, Any] = {}
+    extraction: BatchItemExtraction = Field(default_factory=BatchItemExtraction)
 
 
 class ExtractionBatchResponse(BaseModel):
@@ -543,7 +601,7 @@ def _parse_batch_response(
             for doc in response.parsed.documents:
                 idx = doc.idx - 1  # Convert 1-based to 0-based
                 if 0 <= idx < n:
-                    result = dict(doc.extraction)
+                    result = doc.extraction.model_dump(exclude_none=True)
                     result["_pipeline"] = "gemini_batch_extraction"
                     results[idx] = result
             return results

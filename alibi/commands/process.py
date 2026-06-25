@@ -180,12 +180,32 @@ def process(path: str | None, dry_run: bool) -> None:
     # Process via service layer
     results: list[ProcessingResult] = []
 
+    # Resolve the default attribution user from the inbox _config.yaml
+    # (`default_user`, an id or name). Falls back to the generic "system" account
+    # when unset or unmatched, so local ingestion can be attributed to a real
+    # user (e.g. Dmitry) instead of "system".
+    from alibi.services.auth import resolve_user_ref
+
+    default_user = "system"
+    for ctx in file_contexts:
+        ref = ctx.inbox_config.default_user if ctx.inbox_config else ""
+        if ref:
+            resolved = resolve_user_ref(db_manager, ref)
+            if resolved:
+                default_user = resolved
+            else:
+                click.echo(
+                    f"Warning: default_user '{ref}' did not match a user; "
+                    "attributing to system."
+                )
+            break
+
     # Set CLI provenance on all folder contexts
     for ctx in file_contexts:
         if ctx.source is None:
             ctx.source = "cli"
         if ctx.user_id is None:
-            ctx.user_id = "system"
+            ctx.user_id = default_user
 
     # Process single files with folder contexts
     for f, ctx in zip(single_files, file_contexts):
@@ -194,7 +214,7 @@ def process(path: str | None, dry_run: bool) -> None:
 
     # Process document groups
     for folder, files in document_groups:
-        group_ctx = FolderContext(source="cli", user_id="system")
+        group_ctx = FolderContext(source="cli", user_id=default_user)
         result = process_document_group(db_manager, files, folder_context=group_ctx)
         results.append(result)
 

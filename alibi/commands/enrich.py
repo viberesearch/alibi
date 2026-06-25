@@ -1132,6 +1132,177 @@ def enrich_reject(item_id: str) -> None:
         console.print(f"[yellow]Item {item_id} not found.[/yellow]")
 
 
+@enrich.command("coverage")
+@click.option(
+    "--stragglers",
+    "-s",
+    default=10,
+    show_default=True,
+    help="Max pending item names to list per field (0 to hide)",
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero if any field's pending count exceeds --max-pending "
+    "(for scheduled / CI data-quality gating)",
+)
+@click.option(
+    "--max-pending",
+    default=0,
+    show_default=True,
+    help="Pending-per-field threshold tolerated under --check",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the report as JSON (machine-readable; implies no table)",
+)
+def enrich_coverage(
+    stragglers: int, check: bool, max_pending: int, as_json: bool
+) -> None:
+    """Per-field enrichment coverage: filled / answered-null / pending.
+
+    A read-only dashboard over the local-LLM fields (comparable_name,
+    unit_quantity, category, attributes, state). 'answered-null' counts rows the
+    model was asked and returned no result for (marked, not re-asked); 'pending'
+    counts rows a future ``lt enrich`` run will still pick up. Makes data-quality
+    regressions visible without ad-hoc SQL.
+
+    With ``--check`` it doubles as a guard: exits non-zero when any field's
+    pending count exceeds ``--max-pending`` (default 0), so a scheduled run can
+    alert when a re-ingest leaves rows un-enriched. ``--json`` emits the same
+    numbers for a dashboard or a custom alerter.
+    """
+    import json as _json
+
+    from alibi.enrichment.coverage import coverage_report, item_coverage_report
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    report = coverage_report(db, straggler_limit=max(0, stragglers))
+    threshold = max(0, max_pending)
+    breaches = [fc for fc in report if fc.pending > threshold]
+
+    # Fact-level item-extraction coverage (item-price sum vs fact total) — a
+    # re-extraction queue surfaced alongside the per-field enrichment tallies.
+    icr = item_coverage_report(db, worst_limit=max(0, stragglers) or 20)
+
+    if as_json:
+        payload = {
+            "fields": [
+                {
+                    "field": fc.field,
+                    "filled": fc.filled,
+                    "answered_null": fc.answered_null,
+                    "pending": fc.pending,
+                    "eligible": fc.eligible,
+                    "filled_pct": round(
+                        (100.0 * fc.filled / fc.eligible) if fc.eligible else 0.0, 1
+                    ),
+                    "stragglers": fc.stragglers,
+                }
+                for fc in report
+            ],
+            "total_pending": sum(fc.pending for fc in report),
+            "max_pending": threshold,
+            "item_coverage": {
+                "threshold_pct": icr.threshold_pct,
+                "eligible": icr.eligible,
+                "below": icr.below,
+                "partial": icr.partial,
+                "no_items": icr.no_items,
+                "worst": [
+                    {
+                        "fact_id": w.fact_id,
+                        "vendor": w.vendor,
+                        "event_date": w.event_date,
+                        "total": w.total,
+                        "item_sum": w.item_sum,
+                        "n_items": w.n_items,
+                        "coverage_pct": w.coverage_pct,
+                    }
+                    for w in icr.worst
+                ],
+            },
+            "ok": not breaches,
+        }
+        # Plain stdout (not Rich) so the JSON is pipeable / parseable.
+        click.echo(_json.dumps(payload, indent=2))
+        if check and breaches:
+            raise SystemExit(1)
+        return
+
+    table = Table(title="Enrichment coverage")
+    table.add_column("Field")
+    table.add_column("Filled", justify="right")
+    table.add_column("Answered-null", justify="right")
+    table.add_column("Pending", justify="right")
+    table.add_column("Eligible", justify="right")
+    table.add_column("Filled %", justify="right")
+    for fc in report:
+        pct = (100.0 * fc.filled / fc.eligible) if fc.eligible else 0.0
+        table.add_row(
+            fc.field,
+            str(fc.filled),
+            str(fc.answered_null),
+            f"[yellow]{fc.pending}[/yellow]" if fc.pending else "0",
+            str(fc.eligible),
+            f"{pct:.1f}%",
+        )
+    console.print(table)
+
+    if stragglers > 0:
+        shown = False
+        for fc in report:
+            if fc.stragglers:
+                if not shown:
+                    console.print("\n[bold]Pending stragglers[/bold]")
+                    shown = True
+                names = ", ".join(fc.stragglers)
+                console.print(f"  [cyan]{fc.field}[/cyan] ({fc.pending}): {names}")
+        if not shown:
+            console.print("\n[green]No pending items — full coverage.[/green]")
+
+    # Fact-level item-extraction coverage (re-extraction queue).
+    pct = (100.0 * (icr.eligible - icr.below) / icr.eligible) if icr.eligible else 0.0
+    console.print(
+        f"\n[bold]Item coverage[/bold] (item-price sum vs fact total, "
+        f"threshold {icr.threshold_pct:.0f}%): "
+        f"{icr.eligible - icr.below}/{icr.eligible} facts OK ({pct:.0f}%); "
+        f"[yellow]{icr.below} below[/yellow] "
+        f"({icr.partial} partial, {icr.no_items} item-less)."
+    )
+    if icr.worst and stragglers > 0:
+        console.print("[bold]Worst under-captured facts (re-extract queue)[/bold]")
+        for w in icr.worst:
+            vd = f"{w.vendor or '?'} {w.event_date or ''}".strip()
+            console.print(
+                f"  [cyan]{w.coverage_pct:5.1f}%[/cyan] {vd} — "
+                f"items {w.item_sum}/{w.total} ({w.n_items} item(s)) "
+                f"[dim]{w.fact_id[:8]}[/dim]"
+            )
+
+    if check and breaches:
+        fields = ", ".join(f"{fc.field}={fc.pending}" for fc in breaches)
+        console.print(
+            f"\n[red]Coverage check FAILED:[/red] {len(breaches)} field(s) over "
+            f"the pending threshold ({threshold}): {fields}. "
+            "Run [bold]lt enrich all[/bold] (and [bold]lt enrich states[/bold])."
+        )
+        raise SystemExit(1)
+    if check:
+        console.print(
+            f"\n[green]Coverage check passed[/green] "
+            f"(all fields within pending threshold {threshold})."
+        )
+
+
 @enrich.command("stats")
 def enrich_stats() -> None:
     """Show enrichment statistics: counts by source and average confidence."""
@@ -1237,3 +1408,444 @@ def enrich_barcode_match(limit: int) -> None:
         console.print(f"\n[green]Matched {len(results)} items via barcode.[/green]")
     else:
         console.print("[dim]No new matches found.[/dim]")
+
+
+def _backup_reextract_db(db: DatabaseManager) -> None:
+    """WAL-safe online backup of the live DB before a re-extraction apply."""
+    import sqlite3
+    import time
+
+    src_path = db.db_path
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    dest_path = src_path.with_name(src_path.name + f".bak_reextract_{stamp}")
+    src = sqlite3.connect(str(src_path))
+    dest = sqlite3.connect(str(dest_path))
+    try:
+        src.backup(dest)  # consistent snapshot, WAL-safe
+    finally:
+        dest.close()
+        src.close()
+    console.print(f"[dim]DB backed up -> {dest_path.name}[/dim]")
+
+
+def _run_recollapse_only(
+    db: DatabaseManager,
+    fact_id: str | None,
+    limit: int,
+    apply: bool,
+    allow_reduce: bool = False,
+) -> None:
+    """Re-collapse facts (no Gemini) to apply collapse-rule fixes, keep keys.
+
+    Default scope is the additive within-bundle dedup queue. With
+    ``allow_reduce`` the scope switches to the duplicate-photo over-count queue
+    (multi-basket facts whose items over-sum the total) and item reductions are
+    applied -- dropping the doubled basket's items is the fix there.
+    """
+    from alibi.services import reextract as rx
+
+    if fact_id:
+        targets = [fact_id]
+    elif allow_reduce:
+        targets = rx.select_overcount_candidates(db, limit=limit)
+        if not targets:
+            console.print("[green]No multi-basket over-count facts.[/green]")
+            return
+        console.print(f"[dim]{len(targets)} multi-basket over-count fact(s).[/dim]")
+    else:
+        targets = rx.select_recollapse_candidates(db, limit=limit)
+        if not targets:
+            console.print("[green]No facts with within-bundle duplicate items.[/green]")
+            return
+        console.print(f"[dim]{len(targets)} fact(s) with within-bundle repeats.[/dim]")
+
+    if apply:
+        _backup_reextract_db(db)
+
+    title = "Re-collapse" + ("" if apply else " (DRY RUN)")
+    table = Table(title=title)
+    table.add_column("Fact")
+    table.add_column("Vendor")
+    table.add_column("Items", justify="right")
+    table.add_column("Key kept")
+    table.add_column("Note")
+
+    changed = 0
+    key_breaks = 0
+    for fid in targets:
+        res = rx.recollapse_fact(db, fid, apply=apply, allow_reduce=allow_reduce)
+        if res.error:
+            table.add_row(fid[:8], res.vendor or "?", "-", "-", res.error)
+            continue
+        items = f"{res.items_before}->{res.items_after}"
+        if apply:
+            kept = "yes" if res.vendor_key_preserved else "[red]NO[/red]"
+            if not res.vendor_key_preserved:
+                key_breaks += 1
+            if res.items_after != res.items_before:
+                changed += 1
+            note = "applied" if res.items_after != res.items_before else "no change"
+        else:
+            kept = "n/a"
+            if res.items_after > res.items_before:
+                changed += 1
+                note = "would recover"
+            elif res.items_after < res.items_before:
+                changed += 1
+                note = "would reduce" if allow_reduce else "would reduce (skipped)"
+            else:
+                note = "no change"
+        table.add_row(fid[:8], res.vendor or "?", items, kept, note)
+
+    console.print(table)
+    verb = "change" if allow_reduce else "recover"
+    if not apply:
+        console.print(
+            f"[dim]Dry run -- {changed} fact(s) would {verb} items. "
+            "Re-run with --apply --recollapse-only"
+            f"{' --allow-reduce' if allow_reduce else ''} to write.[/dim]"
+        )
+    else:
+        console.print(
+            f"[green]Re-collapsed -- {changed} fact(s) changed items.[/green]"
+        )
+        if key_breaks:
+            console.print(
+                f"[red]WARNING: {key_breaks} fact(s) changed vendor_key.[/red]"
+            )
+        console.print(
+            "[yellow]Run lt fx backfill, lt enrich all/states, "
+            "scripts/datasette_refresh.sh.[/yellow]"
+        )
+
+
+@enrich.command("reextract")
+@click.option("--fact", "fact_id", default=None, help="Re-extract a single fact by id.")
+@click.option(
+    "--queue",
+    type=click.Choice(["partial", "item-less", "all"]),
+    default=None,
+    help="Re-extract worst-first from the item-coverage queue.",
+)
+@click.option("--limit", "-l", default=5, help="Max facts to process from --queue.")
+@click.option(
+    "--threshold", "-t", default=92.0, help="Coverage %% threshold for the queue."
+)
+@click.option("--apply", is_flag=True, help="Mutate the DB (default: dry-run preview).")
+@click.option(
+    "--no-yaml-sync",
+    is_flag=True,
+    help="Do not write richer items back to the YAML SSOT on apply.",
+)
+@click.option(
+    "--recollapse-only",
+    is_flag=True,
+    help="Re-collapse target facts to pick up collapse-rule fixes (no Gemini). "
+    "With no --fact, scans facts with within-bundle duplicate item lines.",
+)
+@click.option(
+    "--allow-reduce",
+    is_flag=True,
+    help="With --recollapse-only: target multi-basket over-count facts and "
+    "apply item REDUCTIONS (drops the doubled duplicate-photo basket). Without "
+    "--fact, scans the over-count queue instead of the additive one.",
+)
+def enrich_reextract(
+    fact_id: str | None,
+    queue: str | None,
+    limit: int,
+    threshold: float,
+    apply: bool,
+    no_yaml_sync: bool,
+    recollapse_only: bool,
+    allow_reduce: bool,
+) -> None:
+    """Merge-preserving re-extraction of under-extracted facts.
+
+    Re-runs Stage-3 (Gemini) structuring on each target document's CACHED OCR
+    text (NEVER re-OCR) to recover missing line items, then splices the richer
+    items into the EXISTING fact via re-collapse -- preserving the reconciled
+    vendor_key and any multi-document collapse (no re-split).
+
+    Dry-run by default: shows the projected item delta without mutating. Pass
+    --apply to write (the DB is backed up first). Work the 'partial' queue
+    before 'item-less'. Needs Gemini extraction enabled
+    (ALIBI_GEMINI_EXTRACTION_ENABLED=true + ALIBI_GEMINI_API_KEY).
+    """
+    from alibi.services import reextract as rx
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    if recollapse_only:
+        _run_recollapse_only(db, fact_id, limit, apply, allow_reduce=allow_reduce)
+        return
+
+    if not fact_id and not queue:
+        console.print(
+            "[red]Provide --fact <id> or --queue partial|item-less|all.[/red]"
+        )
+        return
+
+    config = get_config()
+    if not config.gemini_extraction_enabled:
+        console.print(
+            "[red]Gemini extraction not enabled.[/red] "
+            "Set ALIBI_GEMINI_EXTRACTION_ENABLED=true"
+        )
+        return
+    if not config.gemini_api_key:
+        console.print("[red]ALIBI_GEMINI_API_KEY not configured.[/red]")
+        return
+
+    if fact_id:
+        targets = [fact_id]
+    else:
+        rows = rx.select_queue(
+            db, queue=queue or "partial", limit=limit, threshold_pct=threshold
+        )
+        targets = [r.fact_id for r in rows]
+        if not targets:
+            console.print(
+                f"[green]No facts in queue '{queue}' below {threshold}%.[/green]"
+            )
+            return
+        console.print(
+            f"[dim]{len(targets)} fact(s) from queue '{queue}' (worst first).[/dim]"
+        )
+
+    if apply:
+        _backup_reextract_db(db)
+
+    title = "Re-extraction" + ("" if apply else " (DRY RUN)")
+    table = Table(title=title)
+    table.add_column("Fact")
+    table.add_column("Vendor")
+    table.add_column("Items", justify="right")
+    table.add_column("Cov%", justify="right")
+    table.add_column("Key kept")
+    table.add_column("Note")
+
+    improved = 0
+    key_breaks = 0
+    for fid in targets:
+        res = rx.reextract_fact(db, fid, apply=apply, sync_yaml=not no_yaml_sync)
+        if res.error:
+            table.add_row(fid[:8], res.vendor or "?", "-", "-", "-", res.error)
+            continue
+
+        items = f"{res.items_before}->{res.items_after}"
+        # Only show a coverage delta when the fact was actually re-collapsed.
+        # Skipped facts (and dry-runs) keep coverage_after at its 0.0 default,
+        # so show just the unchanged before-value rather than a bogus "X->0.0".
+        cov = (
+            f"{res.coverage_before}->{res.coverage_after}"
+            if res.applied
+            else f"{res.coverage_before}"
+        )
+        # On apply, "improved" is the measured fact-item gain; on dry-run it is
+        # whether re-extraction WOULD change anything (would_change).
+        if apply:
+            kept = "yes" if res.vendor_key_preserved else "[red]NO[/red]"
+            if not res.vendor_key_preserved:
+                key_breaks += 1
+            if res.items_after > res.items_before:
+                improved += 1
+        else:
+            kept = "n/a"
+            if res.would_change:
+                improved += 1
+
+        if res.would_change or res.applied:
+            note = "applied" if apply else "would improve"
+        else:
+            skips = [d.skipped for d in res.documents if d.skipped]
+            note = "; ".join(skips) if skips else "no change"
+        table.add_row(fid[:8], res.vendor or "?", items, cov, kept, note)
+
+    console.print(table)
+
+    if not apply:
+        console.print(
+            f"[dim]Dry run -- {improved} fact(s) would improve. "
+            "Re-run with --apply to write.[/dim]"
+        )
+    else:
+        console.print(f"[green]Applied -- {improved} fact(s) improved.[/green]")
+        if key_breaks:
+            console.print(
+                f"[red]WARNING: {key_breaks} fact(s) changed vendor_key "
+                "(unexpected) -- inspect before trusting.[/red]"
+            )
+        console.print(
+            "[yellow]Run scripts/datasette_refresh.sh and restart the API "
+            "(launchctl kickstart -k gui/$(id -u)/com.alibi.api).[/yellow]"
+        )
+
+
+@enrich.command("split-dates")
+@click.option("--fact", "fact_id", default=None, help="Split a single fact's cloud.")
+@click.option(
+    "--grace-days",
+    default=3,
+    help="Refuse to split basket dates within this many days (ambiguity guard).",
+)
+@click.option("--limit", "-l", default=50, help="Max clouds to process.")
+@click.option("--apply", is_flag=True, help="Mutate the DB (default: dry-run).")
+def enrich_split_dates(
+    fact_id: str | None, grace_days: int, limit: int, apply: bool
+) -> None:
+    """Split date-mis-merged clouds (Type-B) into one cloud per basket date.
+
+    Formation used to merge same-vendor/same-amount baskets from DIFFERENT days
+    (fixed going forward). This remediation undoes existing mis-merges: each
+    distinct-date basket group becomes its own cloud (same-date slips routed
+    along), vendor_key preserved on same-vendor groups. Conservative: skips
+    near-dates and same-month-day-across-years (likely OCR). Dry-run by default;
+    --apply backs up the DB first.
+    """
+    from alibi.services import reextract as rx
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    if fact_id:
+        fact = db.fetchone("SELECT cloud_id FROM facts WHERE id = ?", (fact_id,))
+        if not fact:
+            console.print(f"[red]Fact {fact_id} not found.[/red]")
+            return
+        targets = [fact["cloud_id"]]
+    else:
+        targets = rx.select_date_split_candidates(
+            db, grace_days=grace_days, limit=limit
+        )
+        if not targets:
+            console.print("[green]No date-mis-merged clouds to split.[/green]")
+            return
+        console.print(f"[dim]{len(targets)} mis-merged cloud(s).[/dim]")
+
+    if apply:
+        _backup_reextract_db(db)
+
+    table = Table(title="Date split" + ("" if apply else " (DRY RUN)"))
+    table.add_column("Cloud")
+    table.add_column("Vendor")
+    table.add_column("Dates")
+    table.add_column("New clouds", justify="right")
+    table.add_column("Note")
+
+    split = 0
+    for cid in targets:
+        res = rx.split_cloud_by_date(db, cid, apply=apply, grace_days=grace_days)
+        if res.error:
+            table.add_row(cid[:8], res.vendor or "?", "-", "-", res.error)
+            continue
+        if res.skipped:
+            table.add_row(cid[:8], res.vendor or "?", "-", "-", res.skipped)
+            continue
+        dates = ",".join(res.dates)
+        if apply:
+            note = f"+{res.new_clouds} clouds"
+            split += res.new_clouds
+        else:
+            note = f"would make +{len(res.dates) - 1}"
+            split += len(res.dates) - 1
+        table.add_row(cid[:8], res.vendor or "?", dates, str(res.new_clouds), note)
+
+    console.print(table)
+    if not apply:
+        console.print(
+            f"[dim]Dry run -- would create {split} new cloud(s). "
+            "Re-run with --apply to write.[/dim]"
+        )
+    else:
+        console.print(f"[green]Split -- created {split} new cloud(s).[/green]")
+        console.print(
+            "[yellow]Run lt fx backfill, lt enrich all/states, "
+            "scripts/datasette_refresh.sh.[/yellow]"
+        )
+
+
+@enrich.command("reconcile-prices")
+@click.option("--fact", "fact_id", default=None, help="Reconcile a single fact by id.")
+@click.option("--limit", "-l", default=50, help="Max over-count facts to scan.")
+@click.option(
+    "--ratio", default=1.15, help="Flag facts whose item_sum exceeds total*ratio."
+)
+@click.option("--apply", is_flag=True, help="Mutate the DB (default: dry-run).")
+def enrich_reconcile_prices(
+    fact_id: str | None, limit: int, ratio: float, apply: bool
+) -> None:
+    """Repair item totals that over-sum the receipt total (weighed-line misreads).
+
+    Targets the qty x unit_price double-multiply (the printed line total read as a
+    unit price). Reconciles each over-count fact's line totals to the printed
+    total and auto-applies ONLY a unique, tight fit; residual gaps or ambiguous
+    fits are reported as REVIEW, not guessed. vendor_key preserved; --apply backs
+    up the DB first.
+    """
+    from alibi.services import reconcile as rc
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    if fact_id:
+        targets = [fact_id]
+    else:
+        targets = rc.select_overcount_facts(db, ratio=ratio, limit=limit)
+        if not targets:
+            console.print("[green]No over-count facts to reconcile.[/green]")
+            return
+        console.print(f"[dim]{len(targets)} over-count fact(s) (worst first).[/dim]")
+
+    if apply:
+        _backup_reextract_db(db)
+
+    table = Table(title="Reconcile prices" + ("" if apply else " (DRY RUN)"))
+    table.add_column("Fact")
+    table.add_column("Vendor")
+    table.add_column("Total", justify="right")
+    table.add_column("Item sum", justify="right")
+    table.add_column("Fixes", justify="right")
+    table.add_column("Verdict")
+
+    reconciled = key_breaks = 0
+    for fid in targets:
+        res = rc.reconcile_fact(db, fid, apply=apply)
+        if res.error:
+            table.add_row(fid[:8], res.vendor or "?", "-", "-", "-", res.error)
+            continue
+        sums = f"{res.item_sum_before}->{res.item_sum_after}"
+        if res.reconciles:
+            reconciled += 1
+            if apply and not res.vendor_key_preserved:
+                key_breaks += 1
+            verdict = "applied" if apply else "[green]reconciles[/green]"
+        else:
+            verdict = f"[yellow]REVIEW[/yellow] {res.reason}"
+        table.add_row(
+            fid[:8], res.vendor or "?", str(res.total), sums, str(res.n_fixes), verdict
+        )
+
+    console.print(table)
+    if not apply:
+        console.print(
+            f"[dim]Dry run -- {reconciled} fact(s) would reconcile. "
+            "Re-run with --apply to write; others need review.[/dim]"
+        )
+    else:
+        console.print(f"[green]Reconciled -- {reconciled} fact(s) repaired.[/green]")
+        if key_breaks:
+            console.print(
+                f"[red]WARNING: {key_breaks} fact(s) changed vendor_key.[/red]"
+            )
+        console.print(
+            "[yellow]Run lt fx backfill, lt enrich all/states, "
+            "scripts/datasette_refresh.sh.[/yellow]"
+        )

@@ -70,6 +70,24 @@ def get_user(db: DatabaseManager, user_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def resolve_user_ref(db: DatabaseManager, ref: str) -> str | None:
+    """Resolve a user reference (id or name, case-insensitive) to a user id.
+
+    Used to turn a human-friendly ``default_user`` from an inbox ``_config.yaml``
+    (e.g. ``Dmitry``) into the stored user id. Returns None when no active user
+    matches, so callers can fall back to the generic ``system`` account.
+    """
+    val = (ref or "").strip()
+    if not val:
+        return None
+    row = db.fetchone(
+        "SELECT id FROM users "
+        "WHERE (id = ? OR name = ? COLLATE NOCASE) AND is_active = 1 LIMIT 1",
+        (val, val),
+    )
+    return row["id"] if row else None
+
+
 def list_users(db: DatabaseManager) -> list[dict[str, Any]]:
     """List all active users."""
     rows = db.fetchall(

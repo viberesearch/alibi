@@ -27,6 +27,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
             "style-src 'self' 'unsafe-inline'"
         )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

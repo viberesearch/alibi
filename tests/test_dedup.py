@@ -179,6 +179,97 @@ class TestSelectItemAtoms:
         assert len(atoms) == 2
 
 
+class TestSelectItemAtomsDuplicatePhoto:
+    """Signature-based duplicate-photo de-duplication (Type A over-count).
+
+    Two photos of one receipt make two BASKET bundles with the same
+    (vendor, date, total) but OCR prices that diverged too far for price
+    overlap to catch, so the items were summed (e.g. LIDL 56.22 -> 224.88).
+    """
+
+    @staticmethod
+    def _basket(prices, *, vendor="LIDL", date="2025-12-29", total=56.22):
+        """A basket bundle with item, vendor, datetime and total atoms."""
+        atoms = [
+            {
+                "atom_type": "item",
+                "data": {"name": f"i{i}", "total_price": p},
+            }
+            for i, p in enumerate(prices)
+        ]
+        atoms.append({"atom_type": "vendor", "data": {"name": vendor}})
+        atoms.append({"atom_type": "datetime", "data": {"value": f"{date} 12:00:00"}})
+        atoms.append(
+            {"atom_type": "amount", "data": {"semantic_type": "total", "value": total}}
+        )
+        return {"bundle_id": str(uuid4()), "atoms": atoms}
+
+    def test_diverged_prices_same_signature_deduped(self):
+        # One photo read the receipt as one line, the other as several; prices
+        # don't overlap but vendor+date+total match -> keep one basket only.
+        a = self._basket([56.22], total=56.22)
+        b = self._basket([10.0, 20.0, 26.22], total=56.22)
+        atoms = select_item_atoms([a, b])
+        # Kept basket is the one whose items sum nearest the total (56.22):
+        # b sums to 56.22 exactly; a is also 56.22 -> a (fewer items) loses tie.
+        assert len(atoms) == 3
+
+    def test_keeper_is_closest_to_total_not_most_items(self):
+        # Faithful 17-line basket (sums to the total) must win over a noisier
+        # 23-line basket that only summed to half (the 6217e6af LIDL case).
+        faithful = self._basket([5.0] * 17, total=85.0)  # sums to 85.0 == total
+        noisy = self._basket([2.0] * 21 + [0.1] * 2, total=85.0)  # sums to 42.2
+        atoms = select_item_atoms([noisy, faithful])
+        assert len(atoms) == 17
+
+    def test_different_total_kept(self):
+        # Genuinely different receipts (different totals) are not merged.
+        a = self._basket([1.0, 2.0], total=3.0)
+        b = self._basket([10.0, 20.0], total=30.0)
+        atoms = select_item_atoms([a, b])
+        assert len(atoms) == 4
+
+    def test_ocr_variant_vendor_name_still_deduped(self):
+        a = self._basket([56.22], vendor="LIDL", total=56.22)
+        b = self._basket([10.0, 46.22], vendor="LIDL Cyprus", total=56.22)
+        atoms = select_item_atoms([a, b])
+        assert len(atoms) == 2  # one basket kept despite the name variant
+
+    def test_missing_date_on_one_photo_still_deduped(self):
+        # A duplicate photo lost its date to OCR; vendor+total still match and
+        # the dates do not conflict -> dedup (the Blue Island case).
+        a = self._basket([1.0, 47.14], total=45.62)
+        b = self._basket([10.0, 20.0, 32.04], total=45.62)
+        # Drop b's datetime atom (OCR missed it).
+        b["atoms"] = [at for at in b["atoms"] if at["atom_type"] != "datetime"]
+        atoms = select_item_atoms([a, b])
+        assert len(atoms) == 2  # one basket kept
+
+    def test_conflicting_dates_not_deduped(self):
+        # Same vendor+total but genuinely different days -> keep both.
+        a = self._basket([1.0, 2.0], date="2026-01-12", total=3.0)
+        b = self._basket([1.5, 1.5], date="2026-02-20", total=3.0)
+        atoms = select_item_atoms([a, b])
+        assert len(atoms) == 4
+
+    def test_missing_total_falls_back_to_price_overlap(self):
+        # No total atom -> no signature; disjoint prices -> both kept.
+        a = self._basket([1.0, 2.0], total=None)
+        b = self._basket([100.0, 200.0], total=None)
+        # Strip the total atoms the helper added (total=None still appends one).
+        for bundle in (a, b):
+            bundle["atoms"] = [
+                at
+                for at in bundle["atoms"]
+                if not (
+                    at["atom_type"] == "amount"
+                    and at["data"].get("semantic_type") == "total"
+                )
+            ]
+        atoms = select_item_atoms([a, b])
+        assert len(atoms) == 4
+
+
 class TestOneVendor:
     def test_ocr_variant_names(self):
         assert _one_vendor(["LIDL", "LIDL Cyprus"]) is True

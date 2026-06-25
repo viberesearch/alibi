@@ -11,10 +11,15 @@ from decimal import Decimal
 # Currency symbol to ISO code mappings
 _CURRENCY_SYMBOLS: dict[str, str] = {
     "€": "EUR",
+    "ΕΥΡΩ": "EUR",  # Greek "euro", common on Cyprus/Greek receipt OCR
+    "ευρω": "EUR",
     "$": "USD",
     "£": "GBP",
     "¥": "JPY",
     "₽": "RUB",
+    "руб": "RUB",  # Russian "rubles" word/abbreviation on receipt OCR
+    "руб.": "RUB",
+    "РУБ": "RUB",
     "₪": "ILS",
     "₹": "INR",
     "¢": "USD",  # cents
@@ -85,6 +90,10 @@ def normalize_currency(code: str) -> str:
         return "EUR"  # Default to EUR
 
     code_stripped = code.strip()
+    # Whitespace-only / sentinel values (e.g. an OCR'd "\n" or "null" in the
+    # currency field) mean "unknown" — default to EUR rather than storing junk.
+    if not code_stripped or code_stripped.lower() in ("null", "none", "n/a", "-"):
+        return "EUR"
 
     # Check if it's already a valid ISO code
     code_upper = code_stripped.upper()

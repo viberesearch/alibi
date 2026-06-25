@@ -33,6 +33,7 @@ from alibi.db.models import (
     UnitType,
 )
 from alibi.extraction.text_parser import _clean_invoice_item_name
+from alibi.normalizers.currency import normalize_currency
 from alibi.normalizers.units import normalize_unit
 from alibi.refiners.base import _normalize_amount, _parse_quantity_unit
 
@@ -192,7 +193,10 @@ def _parse_single_bundle(document_id: str, raw: dict[str, Any]) -> AtomParseResu
     raw_text = raw.get("raw_text") or ""
     vat_mapping = _parse_vat_analysis(raw_text)
     doc_language = raw.get("language")
-    currency = raw.get("currency") or "EUR"
+    # Normalize currency symbols/words (€, ΕΥΡΩ, ₽, "руб") and junk ("\n") to
+    # ISO codes here at the source, so every atom built below carries a clean
+    # code and downstream EUR conversion never silently drops a fact.
+    currency = normalize_currency(raw.get("currency") or "EUR")
 
     # --- Vendor atom ---
     vendor_atom = _parse_vendor_atom(document_id, raw)
@@ -259,7 +263,7 @@ def _parse_statement(
     existing receipt/payment bundles naturally.
     """
     result = AtomParseResult()
-    currency = raw.get("currency") or "EUR"
+    currency = normalize_currency(raw.get("currency") or "EUR")
 
     for txn in transactions:
         bundle_atoms_list: list[BundleAtom] = []
@@ -1019,6 +1023,14 @@ def _calculate_comparable_price(data: dict[str, Any]) -> None:
         total_content = quantity
 
     if total_content == 0:
+        return
+
+    # Guard: a gram/millilitre sub-unit with an implausibly small total content
+    # (e.g. unit=g, quantity=1, no real weight) almost always means the weight
+    # was never captured. Converting it to a per-kg/l price multiplies by ~1000
+    # and yields garbage (e.g. a €4.19 item -> €4190/kg). Skip emitting a
+    # comparable price rather than store a nonsensical one.
+    if unit.value in ("g", "ml") and total_content < Decimal("5"):
         return
 
     if unit in _WEIGHT_CONVERSIONS:

@@ -9,6 +9,12 @@ import pytest
 
 os.environ["ALIBI_TESTING"] = "1"
 
+# These tests exercise the Gemini cloud path and patch google.genai.Client, which
+# requires the optional google-genai extra (uninstalled by default). Skip the
+# whole module when it is absent so a plain `pytest` run is green and a real
+# regression in the installed suite is not masked.
+pytest.importorskip("google.genai")
+
 from alibi.extraction.gemini_structurer import (
     BatchDocumentExtraction,
     ExtractionBatchResponse,
@@ -253,14 +259,38 @@ class TestExtractionBatchResponse:
         )
         assert len(resp.documents) == 2
         assert resp.documents[0].idx == 1
-        assert resp.documents[0].extraction["vendor"] == "Store A"
+        assert resp.documents[0].extraction.vendor == "Store A"
         assert resp.documents[1].document_type == "invoice"
+        assert resp.documents[1].extraction.issuer == "Corp B"
 
     def test_batch_document_extraction_defaults(self):
         doc = BatchDocumentExtraction(idx=3)
         assert doc.idx == 3
         assert doc.document_type is None
-        assert doc.extraction == {}
+        # extraction is now a typed model (no free-form dict) so the schema
+        # carries no additionalProperties, which the Gemini Developer API rejects.
+        assert doc.extraction.vendor is None
+        assert doc.extraction.line_items == []
+
+    def test_batch_schema_has_no_additional_properties(self):
+        """Regression: the Developer API rejects additionalProperties.
+
+        The previous free-form ``extraction: dict[str, Any]`` made Pydantic emit
+        ``additionalProperties`` in the JSON schema, which broke every batch
+        Gemini call. The typed superset model must not reintroduce it.
+        """
+
+        def _scan(node: object) -> bool:
+            if isinstance(node, dict):
+                if node.get("additionalProperties") not in (None, False):
+                    return True
+                return any(_scan(v) for v in node.values())
+            if isinstance(node, list):
+                return any(_scan(v) for v in node)
+            return False
+
+        schema = ExtractionBatchResponse.model_json_schema()
+        assert not _scan(schema), "schema must not contain truthy additionalProperties"
 
 
 # ===========================================================================

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from alibi.db.connection import DatabaseManager
 
+from alibi.normalizers.vendors import is_payment_intermediary
 from alibi.normalizers.vendors import normalize_vendor_slug as normalize_vendor_name
 
 # Standard subscription periods: (target_days, tolerance_days)
@@ -102,6 +103,14 @@ def detect_subscriptions(
         display_name = max(name_counts, key=lambda v: name_counts[v])
         normalized_name = normalize_vendor_name(display_name)
 
+        # A subscription is a recurring SERVICE charge, not repeat shopping.
+        # Skip card acquirers/ATM, and skip vendors whose facts are product
+        # baskets (a supermarket visited often is not a subscription).
+        if is_payment_intermediary(display_name):
+            continue
+        if _is_shopping_vendor(db, [e[3] for e in entries]):
+            continue
+
         # Cluster by similar amounts
         clusters = _cluster_by_amount(entries, amount_tolerance)
 
@@ -114,6 +123,28 @@ def detect_subscriptions(
                 patterns.append(pattern)
 
     return sorted(patterns, key=lambda p: p.confidence, reverse=True)
+
+
+def _is_shopping_vendor(db: "DatabaseManager", fact_ids: list[str]) -> bool:
+    """Whether a vendor's facts are product baskets (shopping), not subscriptions.
+
+    A subscription charge has no itemised basket (or a single service line). If
+    the vendor's facts average >= 2 real product line items, it is recurring
+    shopping (e.g. a supermarket) and must not be reported as a subscription.
+    """
+    if not fact_ids:
+        return False
+    placeholders = ",".join("?" for _ in fact_ids)
+    row = db.fetchone(
+        f"""SELECT COUNT(*) AS n_items
+            FROM fact_items
+            WHERE fact_id IN ({placeholders})
+              AND (category != 'Non_Item' OR category IS NULL)
+              AND (category_path NOT LIKE 'adjustment%' OR category_path IS NULL)""",
+        tuple(fact_ids),
+    )
+    n_items = (row["n_items"] if row else 0) or 0
+    return n_items >= 2 * len(fact_ids)
 
 
 def _cluster_by_amount(

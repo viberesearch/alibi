@@ -1,22 +1,14 @@
-"""Telegram bot command handlers."""
+"""Telegram bot command handlers.
+
+The bot is a thin HTTP client of the host API: handlers carry no DB or pipeline
+dependency. Importing this package pulls in only aiogram + httpx, so it can run
+in a slim container (see ``docs/TELEGRAM_THIN_BOT_PLAN.md``).
+"""
 
 try:
     from aiogram import Router
-    from aiogram.types import Message
 except ImportError:
     raise ImportError("Telegram support requires: uv sync --extra telegram")
-
-from alibi.db.connection import DatabaseManager, get_db
-
-
-async def require_db(message: Message) -> DatabaseManager | None:
-    """Get initialized DB or send error to user. Returns None if not ready."""
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized. Please run `lt init` first.")
-        return None
-    return db
-
 
 from .annotation import router as annotation_router
 from .barcode_scan import router as barcode_scan_router
@@ -49,4 +41,4 @@ router.include_router(enrichment_router)
 router.include_router(correction_router)
 router.include_router(annotation_router)
 
-__all__ = ["require_db", "router"]
+__all__ = ["router"]

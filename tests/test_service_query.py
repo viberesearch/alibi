@@ -341,6 +341,52 @@ class TestListFacts:
         assert page["total"] == 7
         assert len(page["facts"]) == 3
 
+    def test_includes_item_count(self, db):
+        # Fact with two line items.
+        doc = _make_doc(db, "/test/basket.jpg")
+        vendor_atom = _make_vendor_atom(db, doc, name="GroceryCo")
+        bundle = _make_bundle(db, doc, [vendor_atom])
+        fact = _make_cloud_and_collapse(db, bundle, vendor="GroceryCo")
+        with db.transaction() as cursor:
+            for nm in ("Milk", "Bread"):
+                item_atom = _make_item_atom(db, doc, name=nm)
+                cursor.execute(
+                    "INSERT INTO fact_items "
+                    "(id, fact_id, atom_id, name, name_normalized, quantity, unit) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid4()), fact.id, item_atom.id, nm, nm.lower(), 1.0, "pcs"),
+                )
+            # A footer line the structurer captured -> Non_Item, must NOT count.
+            footer_atom = _make_item_atom(db, doc, name="TOTAL")
+            cursor.execute(
+                "INSERT INTO fact_items "
+                "(id, fact_id, atom_id, name, name_normalized, quantity, unit, "
+                "category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid4()),
+                    fact.id,
+                    footer_atom.id,
+                    "TOTAL",
+                    "total",
+                    1.0,
+                    "pcs",
+                    "Non_Item",
+                ),
+            )
+
+        # Fact with no items.
+        doc2 = _make_doc(db, "/test/payment.jpg")
+        atom2 = _make_vendor_atom(db, doc2, name="CardSlip")
+        bundle2 = _make_bundle(db, doc2, [atom2])
+        _make_cloud_and_collapse(db, bundle2, vendor="CardSlip")
+
+        result = query.list_facts(db)
+        counts = {f["vendor"]: f["item_count"] for f in result["facts"]}
+        assert counts["GroceryCo"] == 2
+        assert counts["CardSlip"] == 0
+        # The source document_type column is present on every list row.
+        assert all("document_type" in f for f in result["facts"])
+
 
 # ---------------------------------------------------------------------------
 # search_facts

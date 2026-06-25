@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alibi &mdash; User Management</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%236366f1'/%3E%3Ctext x='16' y='23' font-family='sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'%3Ea%3C/text%3E%3C/svg%3E">
 <style>
 *, *::before, *::after {
   box-sizing: border-box;
@@ -93,6 +94,7 @@ a:hover { color: var(--accent-hover); }
   transition: all 0.15s;
 }
 .nav-btn:hover { background: var(--accent-muted); color: var(--text); }
+.nav-btn.active { background: var(--accent-muted); color: var(--text); font-weight: 600; }
 
 .main {
   max-width: 960px;
@@ -887,14 +889,14 @@ tr.fact-row-expanded { background: var(--card-hover); }
 <header class="app-header">
   <div class="app-logo">alibi<span>.</span></div>
   <nav class="header-nav">
-    <button class="nav-btn" onclick="navigate('dashboard')">Dashboard</button>
-    <button class="nav-btn" onclick="navigate('facts')">Facts</button>
-    <button class="nav-btn" onclick="navigate('upload')">Upload</button>
-    <button class="nav-btn" onclick="navigate('analytics')">Analytics</button>
-    <button class="nav-btn" onclick="navigate('item-sky')">Item Sky</button>
-    <button class="nav-btn" onclick="navigate('reconciliation')">Reconcile</button>
-    <button class="nav-btn" onclick="navigate('search')">Search</button>
-    <button class="nav-btn" onclick="navigate('enrichment')">Enrichment</button>
+    <button class="nav-btn" data-route="dashboard" onclick="navigate('dashboard')">Dashboard</button>
+    <button class="nav-btn" data-route="facts" onclick="navigate('facts')">Facts</button>
+    <button class="nav-btn" data-route="upload" onclick="navigate('upload')">Upload</button>
+    <button class="nav-btn" data-route="analytics" onclick="navigate('analytics')">Analytics</button>
+    <button class="nav-btn" data-route="item-sky" onclick="navigate('item-sky')">Item Sky</button>
+    <button class="nav-btn" data-route="reconciliation" onclick="navigate('reconciliation')">Reconcile</button>
+    <button class="nav-btn" data-route="search" onclick="navigate('search')">Search</button>
+    <button class="nav-btn" data-route="enrichment" onclick="navigate('enrichment')">Enrichment</button>
   </nav>
 </header>
 
@@ -1048,6 +1050,12 @@ function handleRoute() {
   var hash = window.location.hash.replace('#', '') || 'dashboard';
   document.querySelectorAll('.view').forEach(function(v) {
     v.classList.remove('active');
+  });
+
+  // Highlight the matching top nav button (none for user-detail routes).
+  var navKey = hash.split('/')[0];
+  document.querySelectorAll('.nav-btn').forEach(function(b) {
+    b.classList.toggle('active', b.getAttribute('data-route') === navKey);
   });
 
   if (hash.startsWith('user/')) {
@@ -1527,7 +1535,7 @@ function buildContactsList(contacts, userId) {
       + '</div>'
       + '<div class="list-item-actions">'
       + '<button class="btn btn-ghost btn-icon" title="Delete contact" aria-label="Delete" '
-      + 'onclick="deleteContact(' + escHtml(String(userId)) + ',' + escHtml(String(c.id)) + ')">'
+      + 'onclick="deleteContact(\'' + escHtml(String(userId)) + '\',\'' + escHtml(String(c.id)) + '\')">'
       + '&times;</button>'
       + '</div>'
       + '</div>';
@@ -1558,7 +1566,7 @@ function buildKeysList(keys, userId) {
       + '</div>'
       + '<div class="list-item-actions">'
       + (k.is_active
-          ? '<button class="btn btn-danger btn-sm" onclick="revokeKey(' + escHtml(String(userId)) + ',' + escHtml(String(k.id)) + ')">Revoke</button>'
+          ? '<button class="btn btn-danger btn-sm" onclick="revokeKey(\'' + escHtml(String(userId)) + '\',\'' + escHtml(String(k.id)) + '\')">Revoke</button>'
           : '')
       + '</div>'
       + '</div>';
@@ -2316,15 +2324,17 @@ function buildFactsView(data) {
 
   var rows = items.map(function(f) {
     var itemCount = f.items ? f.items.length : (f.item_count || 0);
-    var docType = f.document_type || f.type || '—';
-    return '<tr class="fact-row" id="fact-row-' + escHtml(String(f.id)) + '" onclick="toggleFactDetail(' + escHtml(String(f.id)) + ')" data-vendor="' + escHtml((f.vendor || '').toLowerCase()) + '">'
-      + '<td><span class="fact-expand-icon" id="fact-icon-' + escHtml(String(f.id)) + '">&#9654;</span>' + escHtml(f.date || '—') + '</td>'
+    var docType = f.document_type || f.fact_type || f.type || '—';
+    var factDate = f.event_date || f.date || '—';
+    var factTotal = f.total_amount != null ? f.total_amount : f.total;
+    return '<tr class="fact-row" id="fact-row-' + escHtml(String(f.id)) + '" onclick="toggleFactDetail(\'' + escHtml(String(f.id)) + '\')" data-vendor="' + escHtml((f.vendor || '').toLowerCase()) + '">'
+      + '<td><span class="fact-expand-icon" id="fact-icon-' + escHtml(String(f.id)) + '">&#9654;</span>' + escHtml(factDate) + '</td>'
       + '<td>' + escHtml(f.vendor || '—') + '</td>'
-      + '<td style="text-align:right">' + escHtml(f.total != null ? Number(f.total).toFixed(2) : '—') + '</td>'
+      + '<td style="text-align:right">' + escHtml(factTotal != null ? Number(factTotal).toFixed(2) : '—') + '</td>'
       + '<td>' + escHtml(f.currency || '—') + '</td>'
       + '<td><span class="badge badge-muted">' + escHtml(docType) + '</span></td>'
       + '<td style="text-align:center">' + itemCount + '</td>'
-      + '<td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); toggleFactDetail(' + escHtml(String(f.id)) + ')">Details</button></td>'
+      + '<td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); toggleFactDetail(\'' + escHtml(String(f.id)) + '\')">Details</button></td>'
       + '</tr>';
   }).join('');
 
@@ -2826,7 +2836,7 @@ function buildAnalyticsStats(summary) {
   var topCurrency = summary.top_currency || '—';
 
   return '<div class="stats-grid">'
-    + statCard('Total Spent', escHtml(totalSpent), 'current month')
+    + statCard('Total Spent', escHtml(totalSpent), 'all time, EUR')
     + statCard('Transactions', txCount, '')
     + statCard('Avg Basket', escHtml(avgBasket), '')
     + statCard('Top Currency', escHtml(topCurrency), '')
@@ -3110,20 +3120,23 @@ async function loadItemSky() {
       apiGet('/api/v1/item-stars' + itemSkyQuery({ limit: 3000 })),
       apiGet('/api/v1/item-stars/avg-price' + itemSkyQuery({ group_by: itemSkyState.groupBy })),
       apiGet('/api/v1/item-stars/basket' + itemSkyQuery({ by: 'category' })),
-      apiGet('/api/v1/item-stars/facets' + itemSkyQuery())
+      apiGet('/api/v1/item-stars/facets' + itemSkyQuery()),
+      apiGet('/api/v1/item-stars/price-by-state' + itemSkyQuery())
     ]);
     if (!results[0]) return;
     var stars = results[0] || [];
     var avg = results[1] || [];
     var basket = results[2] || [];
     var facets = results[3] || {};
+    var states = results[4] || [];
 
     var html = buildFacetsPanel(facets)
       + '<div style="margin-top:16px">' + buildSkyScatter(stars) + '</div>'
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'
       + buildAvgPanel(avg)
       + buildBasketPanel(basket)
-      + '</div>';
+      + '</div>'
+      + '<div style="margin-top:16px">' + buildStatePanel(states) + '</div>';
     setHtml('isky-results', html);
     bindFacetChips();
   } catch(e) {
@@ -3165,15 +3178,34 @@ function buildSkyScatter(stars) {
   }
 
   var W = 1000, H = 360, padL = 56, padR = 16, padT = 16, padB = 36;
-  var tMin = Math.min.apply(null, pts.map(function(p) { return p.t; }));
-  var tMax = Math.max.apply(null, pts.map(function(p) { return p.t; }));
+  // Robust time domain: a single corrupt event_date (an OCR-misread year — we
+  // have seen 2616) must NOT blow out the whole axis and crush the real data
+  // into a sliver. For a reasonable sample, take the 2nd..98th percentile of the
+  // dates as the domain; out-of-range points are clamped to the plot edges (so
+  // they stay visible and hoverable, just pinned) rather than stretching it.
+  // Small samples fall back to the full min/max, where percentiles are noise.
+  var times = pts.map(function(p) { return p.t; }).sort(function(a, b) { return a - b; });
+  function quantile(sorted, q) {
+    var i = (sorted.length - 1) * q;
+    var lo = Math.floor(i);
+    return sorted[lo] + (sorted[Math.ceil(i)] - sorted[lo]) * (i - lo);
+  }
+  var tMin, tMax;
+  if (times.length >= 20) {
+    tMin = quantile(times, 0.02);
+    tMax = quantile(times, 0.98);
+  } else {
+    tMin = times[0];
+    tMax = times[times.length - 1];
+  }
   var pMin = Math.min.apply(null, pts.map(function(p) { return p.p; }));
   var pMax = Math.max.apply(null, pts.map(function(p) { return p.p; }));
   var lpMin = Math.log10(pMin), lpMax = Math.log10(pMax);
   if (lpMax - lpMin < 0.0001) { lpMax = lpMin + 1; }
   if (tMax - tMin < 1) { tMax = tMin + 1; }
 
-  function sx(t) { return padL + (t - tMin) / (tMax - tMin) * (W - padL - padR); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function sx(t) { return clamp(padL + (t - tMin) / (tMax - tMin) * (W - padL - padR), padL, W - padR); }
   function sy(p) { return padT + (1 - (Math.log10(p) - lpMin) / (lpMax - lpMin)) * (H - padT - padB); }
 
   // Y gridlines at decade-ish marks.
@@ -3194,8 +3226,14 @@ function buildSkyScatter(stars) {
       + '<title>' + escHtml(title) + '</title></circle>';
   }).join('');
 
-  // X axis date labels (min / mid / max).
-  function dlabel(t) { return new Date(t).toISOString().slice(0, 10); }
+  // X axis date labels (min / mid / max). Format from LOCAL components — the
+  // points were parsed as local midnight, so toISOString() (UTC) would shift
+  // each label back a day in any positive-offset timezone.
+  function dlabel(t) {
+    var d = new Date(t);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2)
+      + '-' + ('0' + d.getDate()).slice(-2);
+  }
   var xlabels = '<text x="' + padL + '" y="' + (H - 8) + '" fill="var(--muted)" font-size="10">' + dlabel(tMin) + '</text>'
     + '<text x="' + (W / 2) + '" y="' + (H - 8) + '" fill="var(--muted)" font-size="10" text-anchor="middle">' + dlabel((tMin + tMax) / 2) + '</text>'
     + '<text x="' + (W - padR) + '" y="' + (H - 8) + '" fill="var(--muted)" font-size="10" text-anchor="end">' + dlabel(tMax) + '</text>';
@@ -3218,7 +3256,7 @@ function buildAvgPanel(rows) {
     return '<option value="' + d + '"' + (d === itemSkyState.groupBy ? ' selected' : '') + '>' + d + '</option>';
   }).join('');
   var head = '<div class="card"><div class="card-header">'
-    + '<span class="card-title">Avg comparable price</span>'
+    + '<span class="card-title">Avg comparable price (EUR)</span>'
     + '<select id="isky-groupby" class="form-input" style="width:auto;padding:2px 8px" onchange="itemSkyState.groupBy=this.value;loadItemSky()">'
     + opts + '</select></div>';
   if (!rows.length) {
@@ -3238,7 +3276,8 @@ function buildAvgPanel(rows) {
 }
 
 function buildBasketPanel(rows) {
-  var head = '<div class="card"><div class="card-header"><span class="card-title">Basket composition</span></div>';
+  var head = '<div class="card"><div class="card-header"><span class="card-title">Basket composition</span>'
+    + '<span style="font-size:11px;color:var(--muted)">spend in EUR</span></div>';
   if (!rows.length) {
     return head + '<div class="empty-state"><p>No items.</p></div></div>';
   }
@@ -3248,7 +3287,38 @@ function buildBasketPanel(rows) {
       + '<td style="text-align:right">' + (r.total_spent != null ? Number(r.total_spent).toFixed(2) : '—') + '</td></tr>';
   }).join('');
   return head + '<div class="table-wrap"><table><thead><tr>'
-    + '<th>Category</th><th style="text-align:right">Items</th><th style="text-align:right">Spent</th>'
+    + '<th>Category</th><th style="text-align:right">Items</th><th style="text-align:right">Spent (EUR)</th>'
+    + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+
+// Price-by-state: for each product sold in >1 preservation/preparation state,
+// its normalised price per state side by side (fresh vs canned vs frozen). Rows
+// arrive ordered cheapest-first within a product; repeated product/unit cells are
+// blanked so each product's states group visually.
+function buildStatePanel(rows) {
+  var head = '<div class="card"><div class="card-header">'
+    + '<span class="card-title">Price by state</span>'
+    + '<span style="font-size:11px;color:var(--muted)">fresh / canned / frozen / dried / cured / pickled / roasted / cooked</span>'
+    + '</div>';
+  if (!rows.length) {
+    return head + '<div class="empty-state"><p>No products sold in more than one '
+      + 'state in view. Run <code>lt enrich states</code> then '
+      + '<code>lt items rebuild</code>.</p></div></div>';
+  }
+  var lastKey = null;
+  var body = rows.slice(0, 80).map(function(r) {
+    var key = (r.comparable_name || '') + '|' + (r.comparable_unit || '') + '|' + (r.currency || '');
+    var same = key === lastKey;
+    lastKey = key;
+    return '<tr' + (same ? '' : ' style="border-top:1px solid var(--border)"') + '>'
+      + '<td>' + (same ? '' : escHtml(String(r.comparable_name != null ? r.comparable_name : '—'))) + '</td>'
+      + '<td>' + (same ? '' : escHtml(r.comparable_unit || '—')) + '</td>'
+      + '<td><span class="badge badge-muted">' + escHtml(String(r.state || '—')) + '</span></td>'
+      + '<td style="text-align:right">' + Number(r.avg_comparable_unit_price).toFixed(3) + '</td>'
+      + '<td style="text-align:right">' + r.item_count + '</td></tr>';
+  }).join('');
+  return head + '<div class="table-wrap"><table><thead><tr>'
+    + '<th>Product</th><th>Unit</th><th>State</th><th style="text-align:right">Avg price (EUR)</th><th style="text-align:right">Items</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
 }
 
@@ -3284,13 +3354,29 @@ async function executeSearch() {
   if (resultsEl) resultsEl.innerHTML = '<div class="loading-state"><span class="spinner spinner-lg"></span><span>Searching...</span></div>';
 
   try {
-    var data = await apiPost('/api/v1/search', { query: query, limit: 20 });
+    var data = await apiGet('/api/v1/search?q=' + encodeURIComponent(query) + '&limit=20');
     if (!data) return;
-    setHtml('search-results', buildSearchResults(data, query));
+    setHtml('search-results', buildSearchResults(groupSearchResults(data), query));
   } catch(e) {
     setHtml('search-results', '<div class="loading-state" style="color:var(--danger)">' + escHtml(e.message) + '</div>');
     showToast(e.message, 'error');
   }
+}
+
+// Map the GET /search flat `results` (discriminated by result_type) into the
+// grouped {transactions, items, documents} shape buildSearchResults renders.
+function groupSearchResults(data) {
+  var transactions = [], items = [], documents = [];
+  (data.results || []).forEach(function(r) {
+    if (r.result_type === 'fact') {
+      transactions.push({ id: r.id, vendor: r.title, date: r.document_date, total: r.amount, currency: '' });
+    } else if (r.result_type === 'item') {
+      items.push({ id: r.id, name: r.title, vendor: '', total: r.amount, category: r.subtype });
+    } else if (r.result_type === 'document') {
+      documents.push({ id: r.id, filename: r.title, type: r.subtype, date: r.document_date });
+    }
+  });
+  return { transactions: transactions, items: items, documents: documents };
 }
 
 function buildSearchResults(data, query) {

@@ -9,6 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# vectordb is an optional extra backed by lancedb (uninstalled by default).
+# Importing alibi.vectordb.index evaluates a lancedb annotation at class-
+# definition time, so without the package this module fails to even COLLECT.
+# Skip it entirely when lancedb is absent so a plain `pytest` run is green and a
+# real regression in the installed suite is not masked.
+pytest.importorskip("lancedb")
+
 from alibi.vectordb.embeddings import (
     EMBEDDING_DIM,
     EmbeddingError,

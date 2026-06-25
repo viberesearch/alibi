@@ -1,6 +1,7 @@
 """Tests for continuation features: type_map consolidation, Obsidian notes,
 PDF type detection, statement vendor cleanup, and image slicing."""
 
+import importlib.util
 import io
 from datetime import date
 from decimal import Decimal
@@ -8,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+_HAS_PDF2IMAGE = importlib.util.find_spec("pdf2image") is not None
 
 from alibi.db.models import (
     Artifact,
@@ -237,6 +240,14 @@ class TestGenerateWarrantyNote:
 
 class TestPdfTypeDetection:
     """Tests for PDF type detection via first-page rendering."""
+
+    # PDF first-page rendering goes through pdf2image (an optional extra,
+    # uninstalled by default); these tests patch pdf2image.convert_from_path, so
+    # skip the class when the package is absent rather than fail at patch time.
+    # The rest of this module has no optional-dep requirement.
+    pytestmark = pytest.mark.skipif(
+        not _HAS_PDF2IMAGE, reason="pdf2image not installed (optional extra)"
+    )
 
     @pytest.fixture
     def pipeline(self):

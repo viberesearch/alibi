@@ -226,6 +226,111 @@ def decide_duplicate(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _ItemBundle:
+    """An item-bearing bundle viewed for duplicate-photo de-duplication."""
+
+    atoms: list[dict[str, Any]]
+    prices: "collections.Counter[Decimal]"
+    signature: "_BundleSignature | None"
+    # Distance of this bundle's priced item sum from its own stated total.
+    # The faithful transcription of a duplicate photo is the one whose items
+    # sum nearest the printed total; ``None`` when the total is unknown.
+    coverage_distance: Decimal | None
+
+    @property
+    def n_items(self) -> int:
+        return len(self.atoms)
+
+
+@dataclass(frozen=True)
+class _BundleSignature:
+    """A bundle's receipt identity — vendor slug + total, with an optional date.
+
+    The date is corroborating only: a duplicate photo sometimes loses its date
+    to OCR, so it may be ``None``. Two signatures with *conflicting* dates are
+    never the same receipt; missing dates simply do not contradict.
+    """
+
+    vendor_slug: str
+    total: Decimal
+    event_date: str | None
+
+
+def _atom_type(atom: dict[str, Any]) -> str:
+    """Normalize an atom's type to its string value (enum or str accepted)."""
+    t = atom.get("atom_type", "")
+    return str(getattr(t, "value", t))
+
+
+def _bundle_total(bundle: dict[str, Any]) -> Decimal | None:
+    """The bundle's printed total (the ``total`` semantic amount atom)."""
+    for atom in bundle.get("atoms", []):
+        if _atom_type(atom) == "amount":
+            data = atom.get("data", {})
+            if data.get("semantic_type") == "total":
+                return _round_price(data.get("value"))
+    return None
+
+
+def _bundle_date(bundle: dict[str, Any]) -> str | None:
+    """The bundle's event date (YYYY-MM-DD) from its datetime atom."""
+    for atom in bundle.get("atoms", []):
+        if _atom_type(atom) == "datetime":
+            value = str(atom.get("data", {}).get("value", "")).strip()
+            if len(value) >= 10:
+                return value[:10]
+    return None
+
+
+def _bundle_vendor_slug(bundle: dict[str, Any]) -> str | None:
+    """The bundle's normalized vendor slug, from its vendor atom."""
+    for atom in bundle.get("atoms", []):
+        if _atom_type(atom) == "vendor":
+            slug = normalize_vendor_slug(atom.get("data", {}).get("name") or "")
+            return slug or None
+    return None
+
+
+def _bundle_signature(bundle: dict[str, Any]) -> _BundleSignature | None:
+    """A bundle's identity (vendor + total, optional date), or None.
+
+    Requires a vendor and a printed total; the date is optional corroboration.
+    """
+    slug = _bundle_vendor_slug(bundle)
+    total = _bundle_total(bundle)
+    if slug and total is not None:
+        return _BundleSignature(
+            vendor_slug=slug, total=total, event_date=_bundle_date(bundle)
+        )
+    return None
+
+
+def _same_receipt(a: _BundleSignature, b: _BundleSignature) -> bool:
+    """Whether two bundle signatures denote the same physical receipt.
+
+    Same printed total, a compatible vendor (equal slug, or one a >= 4-char
+    substring of the other for OCR variants like "LIDL" / "LIDL Cyprus"), and
+    dates that do not conflict (equal, or at least one missing). This catches
+    duplicate photos whose OCR prices diverged too far for price overlap and
+    whose images differ too much for a perceptual-hash match.
+
+    Same-vendor/same-total baskets from *different* days are not merged here —
+    but they no longer share a cloud either: formation vetoes same-type merges
+    across a date gap, so a surviving multi-basket cloud is same-date (or
+    date-incomplete) by construction.
+    """
+    if a.total != b.total:
+        return False
+    if a.event_date and b.event_date and a.event_date != b.event_date:
+        return False
+    sa, sb = a.vendor_slug, b.vendor_slug
+    if sa == sb:
+        return True
+    shorter, longer = (sa, sb) if len(sa) <= len(sb) else (sb, sa)
+    return len(shorter) >= 4 and shorter in longer
+
+
 def select_item_atoms(
     bundles: list[dict[str, Any]],
     *,
@@ -236,38 +341,85 @@ def select_item_atoms(
     Complementary bundles (a basket plus its card slip) contribute distinct
     information and are all kept. But two *duplicate* baskets — the same receipt
     scanned twice, which a broadened formation candidate set now merges into one
-    cloud — would otherwise double the line items. So among item-bearing
-    bundles, keep the richest and drop any later one whose item price multiset
-    overlaps an already-kept bundle (>= ``price_threshold``).
+    cloud — would otherwise double the line items. Among item-bearing bundles,
+    keep one per physical receipt and drop the duplicates.
+
+    A later bundle is a duplicate of an already-kept one when **either** their
+    item price multisets overlap (>= ``price_threshold``) **or** they share a
+    ``(vendor, date, total)`` signature. The signature catches duplicate photos
+    whose OCR prices diverged so far that price overlap alone fails (e.g. one
+    photo read 56.22 as a single line, the other as seventeen) and whose images
+    differ too much in resolution for a perceptual-hash match.
+
+    Keeper choice favours the faithful transcription: among duplicates, the
+    bundle whose priced items sum nearest its printed total is kept (most items
+    breaks ties, or stands in when the total is unknown).
 
     Returns the flat list of item atoms to feed to item extraction.
     """
-    # Bundles that carry at least one item atom, richest first.
-    item_bundles: list[tuple[list[dict[str, Any]], collections.Counter[Decimal]]] = []
+    # Bundles that carry at least one item atom. Each atom is tagged with its
+    # source bundle so downstream de-duplication can keep within-bundle repeats
+    # while collapsing cross-bundle duplicates.
+    item_bundles: list[_ItemBundle] = []
     for b in bundles:
-        atoms = [a for a in b.get("atoms", []) if _is_item_atom(a)]
-        if atoms:
-            prices = price_multiset(a.get("data", {}).get("total_price") for a in atoms)
-            item_bundles.append((atoms, prices))
-    item_bundles.sort(key=lambda ba: len(ba[0]), reverse=True)
+        bundle_id = b.get("bundle_id")
+        atoms = [
+            {**a, "_bundle_id": bundle_id}
+            for a in b.get("atoms", [])
+            if _is_item_atom(a)
+        ]
+        if not atoms:
+            continue
+        prices = price_multiset(a.get("data", {}).get("total_price") for a in atoms)
+        total = _bundle_total(b)
+        coverage_distance = (
+            abs(sum(prices.elements(), Decimal("0")) - total)
+            if total is not None
+            else None
+        )
+        item_bundles.append(
+            _ItemBundle(
+                atoms=atoms,
+                prices=prices,
+                signature=_bundle_signature(b),
+                coverage_distance=coverage_distance,
+            )
+        )
+
+    # Keeper-best first: smallest coverage distance, then most items. Bundles
+    # with an unknown total (distance None) sort after, ranked by item count —
+    # which preserves the legacy "keep the richest" behaviour.
+    _far = Decimal("Infinity")
+    item_bundles.sort(
+        key=lambda ib: (
+            ib.coverage_distance if ib.coverage_distance is not None else _far,
+            -ib.n_items,
+        )
+    )
 
     if len(item_bundles) <= 1:
         # Fast path: nothing to dedup — keep every item atom.
-        return [a for atoms, _ in item_bundles for a in atoms]
+        return [a for ib in item_bundles for a in ib.atoms]
 
-    kept: list[tuple[list[dict[str, Any]], collections.Counter[Decimal]]] = []
-    for atoms, prices in item_bundles:
-        duplicates_kept = False
-        for _, kept_prices in kept:
-            union = sum((prices | kept_prices).values())
-            inter = sum((prices & kept_prices).values())
-            if union and inter / union >= price_threshold:
-                duplicates_kept = True
+    kept: list[_ItemBundle] = []
+    for ib in item_bundles:
+        is_duplicate = False
+        for keeper in kept:
+            union = sum((ib.prices | keeper.prices).values())
+            inter = sum((ib.prices & keeper.prices).values())
+            price_dup = bool(union) and inter / union >= price_threshold
+            signature_dup = (
+                ib.signature is not None
+                and keeper.signature is not None
+                and _same_receipt(ib.signature, keeper.signature)
+            )
+            if price_dup or signature_dup:
+                is_duplicate = True
                 break
-        if not duplicates_kept:
-            kept.append((atoms, prices))
+        if not is_duplicate:
+            kept.append(ib)
 
-    return [a for atoms, _ in kept for a in atoms]
+    return [a for ib in kept for a in ib.atoms]
 
 
 # AtomType.ITEM may surface as the enum or its "item" value depending on the
@@ -381,6 +533,119 @@ def find_duplicate_groups(db: DatabaseManager) -> list[list[FactDupInfo]]:
         )
         facts = [_load_fact_info(db, dict(r)) for r in rows]
         groups.extend(_components(facts))
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# Document-level duplicate-PHOTO detection (proactive, read-only)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DuplicatePhoto:
+    """A document that is part of a near-duplicate-photo group."""
+
+    document_id: str
+    file_path: str | None
+    perceptual_hash: str | None
+    cloud_id: str | None  # the doc's cloud (via its bundle), if assigned
+    fact_id: str | None  # the collapsed fact for that cloud, if any
+
+
+@dataclass
+class DuplicatePhotoGroup:
+    """A set of documents whose photos perceptually near-match."""
+
+    documents: list[DuplicatePhoto] = field(default_factory=list)
+
+    @property
+    def distinct_clouds(self) -> set[str]:
+        return {d.cloud_id for d in self.documents if d.cloud_id}
+
+    @property
+    def collapsed_together(self) -> bool:
+        """True when every document already resolves to one shared cloud.
+
+        Such a group is benign — formation/dedup already merged the duplicate.
+        A group spanning several clouds (or with unassigned documents) is the
+        actionable case: the same photo produced separate, un-merged facts.
+        """
+        clouds = {d.cloud_id for d in self.documents}
+        return len(clouds) == 1 and None not in clouds
+
+
+def find_duplicate_photos(
+    db: DatabaseManager,
+    max_distance: int = PHASH_MAX_DISTANCE,
+) -> list[DuplicatePhotoGroup]:
+    """Group documents whose stored perceptual hashes near-match.
+
+    Proactively surfaces duplicate photos straight from
+    ``documents.perceptual_hash`` instead of relying on the amount+date
+    coincidence that fact dedup needs — so a re-ingested or alternate-resolution
+    copy of a receipt is flagged even when the two scans' extractions diverged
+    enough that their facts never shared a ``(date, total)`` bucket.
+
+    Read-only. Returns groups of size >= 2 (most actionable first: groups that
+    span multiple clouds, then larger groups). NOTE: dHash near-match catches
+    near-identical images (re-ingests, alternate-resolution copies) but NOT a
+    fresh re-shoot of the same receipt from a different angle — those differ
+    widely in dHash and remain an amount+date / item-price concern for fact
+    dedup.
+    """
+    rows = db.fetchall(
+        "SELECT d.id AS id, d.file_path AS file_path, "
+        "       d.perceptual_hash AS perceptual_hash, "
+        "       (SELECT b.cloud_id FROM bundles b "
+        "        WHERE b.document_id = d.id AND b.cloud_id IS NOT NULL "
+        "        LIMIT 1) AS cloud_id "
+        "FROM documents d "
+        "WHERE d.perceptual_hash IS NOT NULL AND d.perceptual_hash != ''",
+        (),
+    )
+    docs = [dict(r) for r in rows]
+    n = len(docs)
+    if n < 2:
+        return []
+
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = hamming_distance(docs[i]["perceptual_hash"], docs[j]["perceptual_hash"])
+            if d is not None and d <= max_distance:
+                parent[find(i)] = find(j)
+
+    # Resolve each cloud's collapsed fact once.
+    fact_by_cloud: dict[str, str] = {}
+    for cloud_id in {d["cloud_id"] for d in docs if d["cloud_id"]}:
+        fact = db.fetchone(
+            "SELECT id FROM facts WHERE cloud_id = ? LIMIT 1", (cloud_id,)
+        )
+        if fact:
+            fact_by_cloud[cloud_id] = fact["id"]
+
+    buckets: dict[int, list[DuplicatePhoto]] = {}
+    for i, doc in enumerate(docs):
+        buckets.setdefault(find(i), []).append(
+            DuplicatePhoto(
+                document_id=doc["id"],
+                file_path=doc["file_path"],
+                perceptual_hash=doc["perceptual_hash"],
+                cloud_id=doc["cloud_id"],
+                fact_id=fact_by_cloud.get(doc["cloud_id"]) if doc["cloud_id"] else None,
+            )
+        )
+
+    groups = [DuplicatePhotoGroup(documents=g) for g in buckets.values() if len(g) > 1]
+    # Most actionable first: multi-cloud groups, then larger groups.
+    groups.sort(key=lambda g: (g.collapsed_together, -len(g.documents)))
     return groups
 
 

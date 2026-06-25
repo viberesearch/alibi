@@ -173,6 +173,16 @@ class TestSpendingByVendor:
         result = spending_by_vendor(db)
         assert result == []
 
+    def test_payment_intermediary_excluded(self, db):
+        # Card acquirers / ATM withdrawals are not merchant spend.
+        _create_fact(db, "Shop A", "100.00", date(2026, 1, 1))
+        _create_fact(db, "JCC PAYMENT SYSTEMS", "692.00", date(2026, 1, 2))
+        _create_fact(db, "ATM ERB 2183 050226", "500.00", date(2026, 1, 3))
+
+        result = spending_by_vendor(db)
+        vendors = {r.vendor for r in result}
+        assert vendors == {"Shop A"}
+
     def test_groups_by_vendor_key(self, db):
         _create_fact(db, "FRESKO", "100.00", date(2026, 1, 1), vendor_key="VAT123")
         _create_fact(

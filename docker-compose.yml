@@ -35,19 +35,11 @@ services:
     depends_on:
       - ollama
 
-  # Optional: Telegram bot (uncomment and set env vars)
-  # alibi-telegram:
-  #   build: .
-  #   command: ["uv", "run", "lt", "telegram", "start"]
-  #   volumes:
-  #     - ./data:/app/data
-  #   environment:
-  #     - ALIBI_DB_PATH=/app/data/alibi.db
-  #     - ALIBI_OLLAMA_URL=http://ollama:11434
-  #     - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-  #     - ALIBI_TELEGRAM_ALLOWED_USERS=${ALIBI_TELEGRAM_ALLOWED_USERS}
-  #   depends_on:
-  #     - ollama
+  # Telegram bot: runs as a separate THIN container (no DB/Ollama/pipeline).
+  # It is an HTTP client of this API service, so it lives in its own compose
+  # file to keep this stack DB-bound and the bot portable:
+  #   docker compose -f docker-compose.telegram.yml up -d --build
+  # See Dockerfile.telegram and docs/TELEGRAM_THIN_BOT_PLAN.md.
 
 volumes:
   ollama_data:

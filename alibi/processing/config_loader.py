@@ -31,6 +31,7 @@ class InboxConfig:
     default_country: str = "CY"
     default_currency: str = "EUR"
     default_language: str = "el"
+    default_user: str = ""  # User id or name for locally-ingested doc attribution
     image_optimization: ImageOptConfig | None = None
 
 
@@ -135,6 +136,7 @@ def merge_configs(
         default_country=country_config.default_country or base.default_country,
         default_currency=country_config.default_currency or base.default_currency,
         default_language=country_config.default_language or base.default_language,
+        default_user=country_config.default_user or base.default_user,
         image_optimization=country_config.image_optimization or base.image_optimization,
     )
 
@@ -162,5 +164,6 @@ def _parse_inbox_config(config_path: Path) -> InboxConfig | None:
         default_country=str(raw.get("default_country", "")),
         default_currency=str(raw.get("default_currency", "")),
         default_language=str(raw.get("default_language", "")),
+        default_user=str(raw.get("default_user", "")),
         image_optimization=img_opt,
     )

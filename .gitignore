@@ -47,8 +47,14 @@ dmypy.json
 data/yaml_store/
 data/yaml_store.backup*/
 data/*.db
-data/*.db.bak
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+data/*.db.bak*
 data/*.db.backup*
+
+# Throwaway UI/analytics screenshots captured during review sessions
+/alibi-*.png
 data/uploads/
 data/*.log
 data/*.txt
@@ -70,10 +76,6 @@ data/lancedb/
 
 # Claude Code local settings (keep commands/ tracked)
 .claude/*
-!.claude/commands/
-!.claude/templates/
-!.claude/skills/
-!.claude/hooks/
 
 # Machine-specific MCP config (use .mcp.json.silicon or .mcp.json.intel templates)
 .mcp.json
@@ -94,3 +96,6 @@ excalidraw.log
 
 # Manual-review working sheets (generated)
 review/
+
+# Datasette read-only snapshot (regenerated from the live DB)
+data/explore/

@@ -19,6 +19,7 @@ from alibi.services import (
     basket_composition as svc_basket_composition,
     list_attribute_facets as svc_list_attribute_facets,
     list_item_stars as svc_list_item_stars,
+    price_by_state as svc_price_by_state,
     price_trend as svc_price_trend,
     rebuild_item_stars as svc_rebuild_item_stars,
 )
@@ -182,6 +183,53 @@ async def avg_price(
         return svc_avg_comparable_price(db, filters, dims)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/price-by-state")
+async def price_by_state(
+    db: Annotated[DatabaseManager, Depends(get_database)],
+    user: Annotated[dict[str, Any], Depends(require_user)],
+    min_states: int = Query(
+        2,
+        ge=2,
+        description="Only products appearing in at least this many distinct states",
+    ),
+    name: Optional[str] = Query(None),
+    comparable_name: Optional[str] = Query(None),
+    category_path: Optional[str] = Query(None),
+    vendor: Optional[str] = Query(None),
+    vendor_key: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
+    currency: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    price_min: Optional[float] = Query(None),
+    price_max: Optional[float] = Query(None),
+    attr: Optional[str] = Query(None, description="Facet filter, e.g. organic:true"),
+) -> list[dict[str, Any]]:
+    """Comparable unit price by product STATE, within a product (the #58 facet).
+
+    For each comparable product sold in at least ``min_states`` distinct states
+    (fresh / frozen / canned / dried / cured / pickled / roasted / cooked), the
+    normalised price per state -- fresh vs canned vs frozen, side by side. Scoped
+    to genuine comparisons (a product seen in only one state is omitted), grouped
+    within ``comparable_unit`` so EUR/kg never blends with EUR/L or EUR/pcs.
+    """
+    filters = _collect_filters(
+        name,
+        comparable_name,
+        category_path,
+        vendor,
+        vendor_key,
+        country,
+        currency,
+        date_from,
+        date_to,
+        price_min,
+        price_max,
+        attr,
+    )
+    return svc_price_by_state(db, filters, min_states=min_states)
 
 
 @router.get("/trend")

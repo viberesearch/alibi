@@ -380,6 +380,11 @@ class TestNormalizeCurrency:
         assert normalize_currency("$") == "USD"
         assert normalize_currency("£") == "GBP"
 
+    def test_greek_euro_word(self):
+        """Greek 'euro' (common on Cyprus/Greek receipt OCR) maps to EUR."""
+        assert normalize_currency("ΕΥΡΩ") == "EUR"
+        assert normalize_currency("ευρω") == "EUR"
+
     def test_iso_code_passthrough(self):
         """Test ISO codes pass through unchanged."""
         assert normalize_currency("EUR") == "EUR"
@@ -389,6 +394,19 @@ class TestNormalizeCurrency:
         """Test edge cases."""
         assert normalize_currency("") == "EUR"  # Default
         assert normalize_currency("UNKNOWN") == "UNKNOWN"
+
+    def test_whitespace_and_sentinels_default_to_eur(self):
+        """OCR junk in the currency field ('\\n', whitespace, 'null') -> EUR,
+        never stored verbatim (this is what reached a fact as currency '\\n')."""
+        assert normalize_currency("\n") == "EUR"
+        assert normalize_currency("   ") == "EUR"
+        assert normalize_currency("null") == "EUR"
+        assert normalize_currency("N/A") == "EUR"
+        assert normalize_currency("-") == "EUR"
+
+    def test_rouble_word(self):
+        assert normalize_currency("руб") == "RUB"
+        assert normalize_currency("₽") == "RUB"
 
 
 class TestParseAmountWithCurrency:
@@ -627,3 +645,90 @@ class TestUserUnitAliases:
 
         init_unit_mappings(None)
         assert normalize_unit("kilogramm") == UnitType.OTHER
+
+
+class TestVendorSlugTransliteration:
+    """Greek-script vendor names must slug to their Latin equivalent so a
+    Greek receipt and its Latin-script card slip share a cloud key."""
+
+    def test_greek_slugs_to_latin(self):
+        from alibi.normalizers.vendors import normalize_vendor_slug
+
+        assert normalize_vendor_slug("ΣΚΛΑΒΕΝΙΤΗΣ") == "sklavenitis"
+        assert normalize_vendor_slug("ΓΑΛΑ") == "gala"
+
+    def test_greek_and_latin_vendor_match(self):
+        from alibi.clouds.formation import vendors_match
+
+        # Same name, different script (transliteration, not translation).
+        assert vendors_match("ΣΚΛΑΒΕΝΙΤΗΣ", "SKLAVENITIS")
+        # Shared Latin word (e.g. "COLUMBIA") survives, as on the real receipts.
+        assert vendors_match("ΣΚΛΑΒΕΝΙΤΗΣ COLUMBIA", "SKLAVENITIS COLUMBIA")
+
+    def test_distinct_vendors_do_not_match(self):
+        from alibi.clouds.formation import vendors_match
+
+        assert not vendors_match("LIDL", "FRESKO")
+
+    def test_latin_names_unchanged(self):
+        from alibi.normalizers.vendors import normalize_vendor_slug
+
+        assert normalize_vendor_slug("FreSko BUTANOLO LTD") == "freskobutanolo"
+
+    def test_cyrillic_slugs_to_latin(self):
+        from alibi.normalizers.vendors import normalize_vendor_slug
+
+        assert normalize_vendor_slug("РОМАШКА") == "romashka"
+        # ё -> e matches the brand's own Latin spelling "Pyaterochka".
+        assert normalize_vendor_slug("Пятёрочка") == "pyaterochka"
+
+    def test_cyrillic_legal_prefix_stripped(self):
+        from alibi.normalizers.vendors import normalize_vendor_slug
+
+        # "ООО Ромашка" (receipt) and a slip's bare "Romashka" slug alike.
+        assert normalize_vendor_slug("ООО Ромашка") == "romashka"
+        assert normalize_vendor_slug("ЗАО Магнит") == "magnit"
+
+    def test_cyrillic_and_latin_vendor_match(self):
+        from alibi.clouds.formation import vendors_match
+
+        assert vendors_match("ООО Ромашка", "ROMASHKA")
+        assert vendors_match("МАГНИТ", "Magnit")
+
+
+class TestIsPaymentIntermediary:
+    """Card acquirers / processors / ATMs are not real merchants."""
+
+    def test_acquirers_detected(self):
+        from alibi.normalizers.vendors import is_payment_intermediary
+
+        assert is_payment_intermediary("JCC PAYMENT SYSTEMS")
+        assert is_payment_intermediary("JGC PAYMENT SYSTEMS")  # OCR variant
+        assert is_payment_intermediary("P3T PAYMENT SOLUTIONS")
+        assert is_payment_intermediary("ATM ERB 2183 050226")
+
+    def test_real_merchants_not_flagged(self):
+        from alibi.normalizers.vendors import is_payment_intermediary
+
+        assert not is_payment_intermediary("PAPAS HYPERMARKET")
+        assert not is_payment_intermediary("The Nut Cracker House")
+        assert not is_payment_intermediary("ATMOSPHERE CAFE")  # ATM substring
+        assert not is_payment_intermediary(None)
+
+
+class TestCleanRegistration:
+    """Sentinel VAT/tax-id strings must be treated as missing, not stored."""
+
+    def test_sentinels_become_none(self):
+        from alibi.normalizers.vendors import clean_registration
+
+        for sentinel in ("", "null", "NULL", "None", "n/a", "N/A", "na", "-", "--"):
+            assert clean_registration(sentinel) is None, sentinel
+        assert clean_registration(None) is None
+        assert clean_registration("  null  ") is None
+
+    def test_real_registration_preserved(self):
+        from alibi.normalizers.vendors import clean_registration
+
+        assert clean_registration(" CY10370773Q ") == "CY10370773Q"
+        assert clean_registration("103055400K") == "103055400K"

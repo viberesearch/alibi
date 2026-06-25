@@ -513,6 +513,71 @@ def facts_dedup(apply_changes: bool) -> None:
         )
 
 
+@facts.command("duplicate-photos")
+@click.option(
+    "--max-distance",
+    type=int,
+    default=None,
+    help="Max perceptual-hash Hamming distance (default: 6). Higher = looser.",
+)
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    default=False,
+    help="Also list groups already collapsed into one cloud (benign).",
+)
+def facts_duplicate_photos(max_distance: int | None, show_all: bool) -> None:
+    """List near-duplicate document PHOTOS by perceptual hash (read-only).
+
+    Surfaces re-ingested or alternate-resolution copies of the same receipt
+    straight from documents.perceptual_hash, so a duplicate is flagged even when
+    the two scans' extractions diverged and their facts never matched on
+    amount+date. By default only actionable groups (spanning multiple clouds, or
+    with unassigned documents) are shown; pass --all to include benign groups
+    already merged into one cloud. Detects near-identical images, not a fresh
+    re-shoot from a different angle.
+    """
+    from alibi.clouds.dedup import PHASH_MAX_DISTANCE, find_duplicate_photos
+
+    db_manager = get_db()
+    if not db_manager.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    distance = max_distance if max_distance is not None else PHASH_MAX_DISTANCE
+    groups = find_duplicate_photos(db_manager, max_distance=distance)
+    shown = [g for g in groups if show_all or not g.collapsed_together]
+
+    if not shown:
+        console.print(
+            f"[green]No duplicate-photo groups[/green] within distance {distance}"
+            + ("" if show_all else " (use --all to include already-merged groups).")
+        )
+        return
+
+    for grp in shown:
+        n_clouds = len(grp.distinct_clouds)
+        tag = (
+            "[green]merged[/green]"
+            if grp.collapsed_together
+            else f"[yellow]{n_clouds or 'no'} cloud(s)[/yellow]"
+        )
+        console.print(f"\nDuplicate-photo group ({len(grp.documents)} docs, {tag}):")
+        for doc in grp.documents:
+            cloud = doc.cloud_id[:8] if doc.cloud_id else "unassigned"
+            fact = f" fact={doc.fact_id[:8]}" if doc.fact_id else ""
+            path = doc.file_path or doc.document_id
+            console.print(f"  [dim]{cloud}{fact}[/dim]  {path}")
+
+    actionable = sum(1 for g in shown if not g.collapsed_together)
+    console.print(
+        f"\n[bold]{len(shown)}[/bold] group(s) shown; "
+        f"[bold]{actionable}[/bold] span multiple clouds (likely un-merged dupes). "
+        "[dim]Merge with `lt facts dedup` or move bundles via correction.[/dim]"
+    )
+
+
 @facts.command("dispute")
 @click.argument("cloud_id")
 def facts_dispute(cloud_id: str) -> None:

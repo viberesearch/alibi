@@ -219,6 +219,32 @@ def _dec(value: Any) -> Decimal | None:
         return None
 
 
+# JSON schema for Ollama constrained decoding: forces a well-formed
+# ``{"items": [{"idx", "attributes", "pack_count"}]}`` envelope so a garbled OCR
+# batch can't yield unparseable JSON (the same root-cause guard PR #59 added to
+# the product-state pass). ``attributes`` is an open facet map, so it is left as
+# a free-form object; value cleanup stays in ``_clean_attributes`` /
+# ``_clean_pack_count``. Gated by ``config.ollama_structured_output``.
+_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "attributes": {"type": ["object", "null"]},
+                    "pack_count": {"type": ["integer", "null"]},
+                },
+                "required": ["idx", "attributes", "pack_count"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+
 def infer_attributes(
     items: list[dict[str, Any]],
     vendor_name: str = "Unknown",
@@ -245,6 +271,7 @@ def infer_attributes(
         ollama_url=ollama_url,
         timeout=timeout,
         label="Attribute enrichment",
+        response_format=_RESPONSE_FORMAT,
     )
 
     out: dict[int, tuple[dict[str, Any], int | None]] = {}

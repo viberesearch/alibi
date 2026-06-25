@@ -118,6 +118,31 @@ def _clean_size(unit_raw: Any, qty_raw: Any) -> tuple[str, Decimal] | None:
     return unit_type.value, qty
 
 
+# JSON schema for Ollama constrained decoding: forces a well-formed
+# ``{"items": [{"idx", "unit", "unit_quantity"}]}`` envelope so a garbled OCR
+# batch can't yield unparseable JSON (the same root-cause guard PR #59 added to
+# the product-state pass). Structural only — value cleanup / coercion stays in
+# ``_clean_size``; gated by ``config.ollama_structured_output`` in the structurer.
+_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "unit": {"type": ["string", "null"]},
+                    "unit_quantity": {"type": ["number", "string", "null"]},
+                },
+                "required": ["idx", "unit", "unit_quantity"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+
 def infer_units(
     items: list[dict[str, Any]],
     vendor_name: str = "Unknown",
@@ -148,6 +173,7 @@ def infer_units(
         ollama_url=ollama_url,
         timeout=timeout,
         label="Unit enrichment",
+        response_format=_RESPONSE_FORMAT,
     )
 
     out: dict[int, tuple[str, Decimal] | None] = {}

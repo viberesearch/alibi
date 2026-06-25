@@ -12,6 +12,7 @@ except ImportError:
 
 from alibi.config import get_config
 from alibi.telegram.handlers import router
+from alibi.telegram.handlers.upload import run_spool_drain
 from alibi.telegram.middleware import AllowedUsersMiddleware
 
 
@@ -57,9 +58,13 @@ async def main() -> None:
         logger.error(f"Failed to get bot info: {e}")
         sys.exit(1)
 
+    # Drain any uploads spooled while the host API was unreachable (boot race).
+    drain_task = asyncio.create_task(run_spool_drain(bot))
+
     try:
         await dp.start_polling(bot)
     finally:
+        drain_task.cancel()
         await bot.session.close()
 
 

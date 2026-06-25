@@ -39,6 +39,33 @@ Condiments, Oils, Canned, Frozen, Cleaning, Personal Care, Baby, Pet, \
 Alcohol, Tobacco, Household, Other. null if truly unknown.
 - Be concise. Only the JSON object, no explanation."""
 
+# JSON schema constraining the brand/category reply's decoding so the local model
+# cannot emit malformed JSON on garbled batches — the same mechanism the units /
+# comparable_names / categorize / attributes passes adopted. ``brand`` and
+# ``category`` are nullable and required (the prompt always emits both keys, null
+# when unknown); there is no per-field marker column here — a row stays selected
+# while ``brand`` and ``category`` are both empty — so present-null vs absent does
+# not change persistence, and requiring both keeps the constraint tightest. Gated
+# by ``config.ollama_structured_output``.
+_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "brand": {"type": ["string", "null"]},
+                    "category": {"type": ["string", "null"]},
+                },
+                "required": ["idx", "brand", "category"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
 
 @dataclass
 class LlmEnrichmentResult:
@@ -98,6 +125,7 @@ def infer_brand_category(
             model=model,
             ollama_url=ollama_url,
             timeout=resolved_timeout,
+            response_format=_RESPONSE_FORMAT,
         )
 
         inferred = result.get("items", [])

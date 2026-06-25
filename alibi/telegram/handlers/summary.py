@@ -1,4 +1,4 @@
-"""Summary command handler."""
+"""Summary command handler — thin client over the host analytics endpoints."""
 
 import logging
 from datetime import date
@@ -7,15 +7,19 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from alibi.services.analytics import (
-    detect_subscriptions,
-    spending_by_vendor,
-    spending_summary,
-)
-from alibi.telegram.handlers import require_db
+from alibi.telegram.api_client import AlibiAPIError
+from alibi.telegram.handlers._common import api_key_for, client
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+def _f(value: object) -> float:
+    """Coerce an API numeric (Decimal serialised as str) to float."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
 
 
 @router.message(Command("summary"))
@@ -25,67 +29,77 @@ async def summary_handler(message: Message) -> None:
     Shows the current month total, recent monthly trend, top vendors,
     and any detected subscription patterns.
     """
-    db = await require_db(message)
-    if db is None:
-        return
-
+    api_key = api_key_for(message)
     today = date.today()
     month_start = date(today.year, today.month, 1)
 
-    # Monthly totals across all history (chronological, purchase facts only)
-    from alibi.analytics.spending import MonthlySpend
-
-    raw_monthly = spending_summary(db, period="month")
-    monthly: list[MonthlySpend] = list(raw_monthly)  # type: ignore[arg-type]
+    try:
+        monthly = await client.spending_summary(api_key=api_key, period="month")
+    except AlibiAPIError:
+        logger.exception("spending summary failed")
+        await message.answer("Could not load summary. Please try again.")
+        return
 
     if not monthly:
         await message.answer(f"No transactions found for {today.strftime('%B %Y')}")
         return
 
-    # Current month entry (last entry if it matches this month)
     current_month_key = f"{today.year}-{today.month:02d}"
-    current_month = next((m for m in monthly if m.month == current_month_key), None)
+    current_month = next(
+        (m for m in monthly if m.get("month") == current_month_key), None
+    )
 
     response = f"*Monthly Summary - {today.strftime('%B %Y')}*\n\n"
 
     if current_month:
         response += (
-            f"*This month:* {float(current_month.total):.2f}"
-            f" ({current_month.count} transactions,"
-            f" avg {float(current_month.avg_amount):.2f})\n"
+            f"*This month:* {_f(current_month.get('total')):.2f}"
+            f" ({current_month.get('count', 0)} transactions,"
+            f" avg {_f(current_month.get('avg_amount')):.2f})\n"
         )
     else:
         response += "_No purchases recorded this month yet_\n"
 
-    # Show the last 3 months for context (excluding current to avoid duplication)
-    prior_months = [m for m in monthly if m.month != current_month_key][-3:]
+    prior_months = [m for m in monthly if m.get("month") != current_month_key][-3:]
     if prior_months:
         response += "\n*Recent months:*\n"
         for m in prior_months:
-            response += f"  {m.month}: {float(m.total):.2f} ({m.count} txns)\n"
+            response += (
+                f"  {m.get('month')}: {_f(m.get('total')):.2f}"
+                f" ({m.get('count', 0)} txns)\n"
+            )
 
     # Top vendors by spend (current month only)
-    vendors = spending_by_vendor(db, filters={"date_from": month_start, "limit": 5})
+    try:
+        vendors = await client.spending_summary(
+            api_key=api_key,
+            period="vendor",
+            date_from=month_start.isoformat(),
+            limit=5,
+        )
+    except AlibiAPIError:
+        vendors = []
     if vendors:
         response += "\n*Top vendors this month:*\n"
         for v in vendors:
             response += (
-                f"  {v.vendor[:25]}: {float(v.total):.2f}"
-                f" ({v.count} txns, {v.share_pct:.0f}%)\n"
+                f"  {(v.get('vendor') or 'Unknown')[:25]}: {_f(v.get('total')):.2f}"
+                f" ({v.get('count', 0)} txns, {_f(v.get('share_pct')):.0f}%)\n"
             )
 
     # Detected subscriptions
     try:
-        subscriptions = detect_subscriptions(db)
+        subscriptions = await client.detect_subscriptions(api_key=api_key)
         if subscriptions:
             response += "\n*Subscriptions detected:*\n"
             for sub in subscriptions[:5]:
                 response += (
-                    f"  {sub.vendor[:25]}: {float(sub.avg_amount):.2f}"
-                    f" {sub.period_type}"
-                    f" (next: {sub.next_expected.isoformat()})\n"
+                    f"  {(sub.get('vendor') or 'Unknown')[:25]}:"
+                    f" {_f(sub.get('avg_amount')):.2f}"
+                    f" {sub.get('period_type', '')}"
+                    f" (next: {sub.get('next_expected', '?')})\n"
                 )
-    except Exception:
+    except AlibiAPIError:
         logger.warning("Subscription detection failed, skipping", exc_info=True)
 
     await message.answer(response, parse_mode="Markdown")

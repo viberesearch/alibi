@@ -1,4 +1,4 @@
-"""Enrichment review handler with inline keyboard."""
+"""Enrichment review handler — thin client over the host ``/enrichment`` endpoints."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from aiogram.types import (
     Message,
 )
 
-from alibi.db.connection import get_db
-from alibi.services import enrichment_review
+from alibi.telegram.api_client import AlibiAPIError
+from alibi.telegram.handlers._common import api_key_for, client
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -44,6 +44,15 @@ def _fmt_conf(conf: float | None) -> str:
     return f"{conf * 100:.0f}%"
 
 
+def _api_key_for_callback(callback: CallbackQuery) -> str | None:
+    """Resolve the acting user's API key from a callback query."""
+    from alibi.telegram.keystore import get_keystore
+
+    if callback.from_user:
+        return get_keystore().get(callback.from_user.id)
+    return None
+
+
 @router.message(Command("enrich"))
 async def enrich_handler(message: Message) -> None:
     """Handle /enrich command — show enrichment review queue with inline keyboards.
@@ -51,16 +60,27 @@ async def enrich_handler(message: Message) -> None:
     Displays up to 5 pending enrichment items (those with confidence < 0.8),
     each with Confirm / Reject buttons.
     """
-    db = get_db()
-    queue = enrichment_review.get_review_queue(db, limit=5)
+    api_key = api_key_for(message)
+    try:
+        queue = await client.enrichment_review(api_key=api_key, limit=5)
+    except AlibiAPIError:
+        logger.exception("Failed to load enrichment queue")
+        await message.answer("Could not load the review queue. Please try again.")
+        return
 
     if not queue:
         await message.answer("No items pending enrichment review.")
         return
 
-    stats = enrichment_review.get_review_stats(db)
-    header = f"*Enrichment Review* ({stats['pending_review']} pending)\n\n"
-    await message.answer(header, parse_mode="Markdown")
+    try:
+        stats = await client.enrichment_stats(api_key=api_key)
+        pending = stats.get("pending_review", len(queue))
+    except AlibiAPIError:
+        pending = len(queue)
+
+    await message.answer(
+        f"*Enrichment Review* ({pending} pending)\n\n", parse_mode="Markdown"
+    )
 
     for item in queue:
         text = (
@@ -71,7 +91,6 @@ async def enrich_handler(message: Message) -> None:
             f"({_fmt_conf(item['enrichment_confidence'])})\n"
             f"Vendor: {_esc(item.get('vendor') or '—')}"
         )
-
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -90,20 +109,24 @@ async def enrich_handler(message: Message) -> None:
                 ]
             ]
         )
-
         await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 
 @router.callback_query(EnrichAction.filter(F.action == "confirm"))
 async def handle_confirm(callback: CallbackQuery, callback_data: EnrichAction) -> None:
     """Handle confirm button press — set enrichment_source to user_confirmed."""
-    db = get_db()
-    ok = enrichment_review.confirm_enrichment(db, callback_data.item_id)
+    try:
+        ok = await client.confirm_enrichment(
+            callback_data.item_id, api_key=_api_key_for_callback(callback)
+        )
+    except AlibiAPIError:
+        await callback.answer("Service unavailable", show_alert=True)
+        return
+
     msg = callback.message
     if ok and isinstance(msg, Message):
-        original = msg.text or ""
         await msg.edit_text(
-            original + "\n\n✓ *Confirmed*",
+            (msg.text or "") + "\n\n✓ *Confirmed*",
             reply_markup=None,
             parse_mode="Markdown",
         )
@@ -115,13 +138,18 @@ async def handle_confirm(callback: CallbackQuery, callback_data: EnrichAction) -
 @router.callback_query(EnrichAction.filter(F.action == "reject"))
 async def handle_reject(callback: CallbackQuery, callback_data: EnrichAction) -> None:
     """Handle reject button press — clear enrichment data from item."""
-    db = get_db()
-    ok = enrichment_review.reject_enrichment(db, callback_data.item_id)
+    try:
+        ok = await client.reject_enrichment(
+            callback_data.item_id, api_key=_api_key_for_callback(callback)
+        )
+    except AlibiAPIError:
+        await callback.answer("Service unavailable", show_alert=True)
+        return
+
     msg = callback.message
     if ok and isinstance(msg, Message):
-        original = msg.text or ""
         await msg.edit_text(
-            original + "\n\n✗ *Rejected*",
+            (msg.text or "") + "\n\n✗ *Rejected*",
             reply_markup=None,
             parse_mode="Markdown",
         )

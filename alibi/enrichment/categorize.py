@@ -21,14 +21,16 @@ to recategorise.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 from alibi.db.connection import DatabaseManager
 from alibi.enrichment import taxonomy
 from alibi.enrichment._batch import (
     apply_answered,
     call_enrichment_llm,
+    mark_processed,
     run_vendor_batches,
 )
 
@@ -42,6 +44,64 @@ _BATCH_SIZE = 12
 
 _ENRICHMENT_SOURCE = "llm_category"
 _CONFIDENCE = 0.7
+
+# Deterministic keyword guard -------------------------------------------------
+# A small, conservative set of high-signal product words mapped straight to a
+# taxonomy path, applied BEFORE the pure-LLM pass. The motivating bug: the LLM
+# bucketed "coffee beans" under ``food > pantry > baking``. For items whose name
+# unambiguously identifies the product, a regex assignment is both more accurate
+# and cheaper than an LLM call. Keep this list tight — only add a rule when a
+# false positive is implausible. Multilingual (EN/EL/RU/TR) to match the corpus.
+_KEYWORD_SOURCE = "keyword_category"
+_KEYWORD_CONFIDENCE = 0.95
+
+_KEYWORD_CATEGORY_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Coffee — the motivating mis-categorisation (beans -> baking). Latin/Russian
+    # words take a full \b...\b; the Greek stem (καφές/καφέ/καφεδες — the suffix
+    # blocks a trailing \b) is matched stem-first with a leading boundary only.
+    (
+        re.compile(
+            r"\b(?:coffee|espresso|cappuccino|americano|decaf|кофе|kahve)\b"
+            r"|\bκαφ[εέ]",
+            re.IGNORECASE,
+        ),
+        "food > beverages > coffee_tea",
+    ),
+    # Tea — same taxonomy leaf. The Greek stem τσά(ι|γ) (τσάι / τσάγια / τσαγιού)
+    # is constrained to ι/γ after the vowel so it can't catch τσάντα ("bag").
+    (
+        re.compile(
+            r"\b(?:tea|chai|matcha|чай|çay)\b" r"|\bτσ[αά][ιγ]",
+            re.IGNORECASE,
+        ),
+        "food > beverages > coffee_tea",
+    ),
+)
+
+# Fail fast at import on a typo'd or taxonomy-drifted target path.
+for _pat, _path in _KEYWORD_CATEGORY_RULES:
+    assert taxonomy.is_valid_path(_path), f"invalid keyword category path: {_path}"
+del _pat, _path
+
+
+def match_keyword_category(item: dict[str, Any]) -> str | None:
+    """Deterministically map a high-signal item to a taxonomy path, or None.
+
+    Searches the item's ``name`` / ``name_normalized`` / ``comparable_name`` for
+    a keyword rule and returns the first match's canonical path. Returns None
+    when no rule is confident, leaving the item to the LLM pass.
+    """
+    haystack = " ".join(
+        str(item.get(field) or "")
+        for field in ("name", "name_normalized", "comparable_name")
+    )
+    if not haystack.strip():
+        return None
+    for pattern, path in _KEYWORD_CATEGORY_RULES:
+        if pattern.search(haystack):
+            return path
+    return None
+
 
 _CATEGORIZE_PROMPT_TEMPLATE = """\
 Assign the single best category to each retail/receipt line item below.
@@ -94,6 +154,30 @@ def _build_items_block(items: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# JSON schema for Ollama constrained decoding: forces a well-formed
+# ``{"items": [{"idx", "category_path"}]}`` envelope so a garbled OCR batch
+# can't yield unparseable JSON (the same root-cause guard PR #59 added to the
+# product-state pass). Structural only — taxonomy validation stays in
+# ``taxonomy.normalize_path``; gated by ``config.ollama_structured_output``.
+_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "category_path": {"type": ["string", "null"]},
+                },
+                "required": ["idx", "category_path"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+
 def infer_categories(
     items: list[dict[str, Any]],
     vendor_name: str = "Unknown",
@@ -132,6 +216,7 @@ def infer_categories(
         ollama_url=ollama_url,
         timeout=timeout,
         label="Category enrichment",
+        response_format=_RESPONSE_FORMAT,
     )
 
     out: dict[int, str | None] = {}
@@ -142,6 +227,68 @@ def infer_categories(
         if isinstance(idx, int):
             out[idx] = taxonomy.normalize_path(raw.get("category_path"))
     return out
+
+
+def _apply_category(
+    db: DatabaseManager,
+    item_id: str,
+    path: str,
+    *,
+    source: str,
+    confidence: float,
+) -> CategoryResult:
+    """Write a resolved category path + leaf back to a single fact_item."""
+    from alibi.services.correction import update_fact_item
+
+    leaf = taxonomy.leaf_of(path)
+    update_fact_item(
+        db,
+        item_id,
+        {
+            "category_path": path,
+            "category": leaf,
+            "enrichment_source": source,
+            "enrichment_confidence": confidence,
+        },
+    )
+    return CategoryResult(item_id, path, leaf, success=True)
+
+
+def apply_keyword_categories(
+    db: DatabaseManager, rows: Iterable[Any]
+) -> tuple[list[CategoryResult], list[dict[str, Any]]]:
+    """Resolve high-signal items deterministically before the LLM pass.
+
+    Walks ``rows`` (raw DB rows or dicts), assigns a category to every item a
+    keyword rule matches (writing it back and stamping the idempotency marker),
+    and returns ``(results, remaining)`` where ``remaining`` are the item dicts
+    the LLM still needs to categorise.
+    """
+    matched: list[CategoryResult] = []
+    matched_ids: list[str] = []
+    remaining: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        path = match_keyword_category(item)
+        if path:
+            matched.append(
+                _apply_category(
+                    db,
+                    item["id"],
+                    path,
+                    source=_KEYWORD_SOURCE,
+                    confidence=_KEYWORD_CONFIDENCE,
+                )
+            )
+            matched_ids.append(item["id"])
+        else:
+            remaining.append(item)
+    mark_processed(
+        db, "category_taxonomy_version", matched_ids, taxonomy.TAXONOMY_VERSION
+    )
+    if matched:
+        logger.info("Keyword-categorised %d high-signal item(s)", len(matched))
+    return matched, remaining
 
 
 def enrich_items(
@@ -170,29 +317,15 @@ def enrich_items(
         items, vendor_name=vendor_name, model=model, ollama_url=ollama_url
     )
 
-    from alibi.services.correction import update_fact_item
-
-    def _write(item_id: str, item: dict[str, Any], path: str) -> CategoryResult:
-        leaf = taxonomy.leaf_of(path)
-        update_fact_item(
-            db,
-            item_id,
-            {
-                "category_path": path,
-                "category": leaf,
-                "enrichment_source": _ENRICHMENT_SOURCE,
-                "enrichment_confidence": _CONFIDENCE,
-            },
-        )
-        return CategoryResult(item_id, path, leaf, success=True)
-
     results = apply_answered(
         db,
         items,
         paths_by_idx,
         mark_column="category_taxonomy_version",
         mark_value=taxonomy.TAXONOMY_VERSION,
-        on_value=_write,
+        on_value=lambda item_id, item, path: _apply_category(
+            db, item_id, path, source=_ENRICHMENT_SOURCE, confidence=_CONFIDENCE
+        ),
         on_skip=lambda item_id, item: CategoryResult(
             item_id, None, None, success=False
         ),
@@ -214,7 +347,10 @@ def enrich_pending_categories(
 ) -> list[CategoryResult]:
     """Find and categorise fact_items lacking a ``category_path``.
 
-    Groups items by vendor for context-aware batching, then calls the LLM in
+    High-signal items (coffee, tea, ...) are resolved deterministically by
+    :func:`apply_keyword_categories` first — both more accurate than the LLM on
+    those (which once put coffee beans under "baking") and cheaper. The rest are
+    grouped by vendor for context-aware batching and sent to the LLM in
     sub-batches. Re-runnable and convergent: a row is selected while it lacks a
     ``category_path`` AND was either never processed or processed under an older
     ``TAXONOMY_VERSION``. A line the model can't map to a valid path is marked
@@ -242,10 +378,13 @@ def enrich_pending_categories(
         "LIMIT ?",
         (taxonomy.TAXONOMY_VERSION, limit),
     )
-    return run_vendor_batches(
-        rows,
+    # Deterministic high-signal items first, then the LLM on the remainder.
+    keyword_results, remaining = apply_keyword_categories(db, rows)
+    llm_results = run_vendor_batches(
+        remaining,
         _BATCH_SIZE,
         lambda vendor_name, batch: enrich_items(
             db, batch, vendor_name=vendor_name, model=model, ollama_url=ollama_url
         ),
     )
+    return keyword_results + llm_results

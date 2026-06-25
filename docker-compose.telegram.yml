@@ -1,0 +1,48 @@
+# Thin Telegram bot — OrbStack/Docker compose service for the host.
+#
+# The host runs the Alibi API (`uv run lt serve`, :3100) which owns the DB and
+# Ollama. This container runs ONLY the bot, forwarding every request to the host
+# API over host.docker.internal. To move the bot to a DigitalOcean droplet later,
+# change ALIBI_API_URL to the host's Tailscale address -- nothing else.
+#
+# Single instance only: two long-pollers on one bot token => Telegram 409
+# Conflict. Do not also run `lt telegram start` on the host while this is up.
+#
+# Usage:
+#   docker compose -f docker-compose.telegram.yml up -d --build
+#   docker compose -f docker-compose.telegram.yml logs -f
+#   docker compose -f docker-compose.telegram.yml down
+
+services:
+  alibi-telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram
+    image: alibi-telegram-bot
+    container_name: alibi-telegram-bot
+    restart: unless-stopped
+    # Make host.docker.internal resolve to the host on Linux Docker too
+    # (OrbStack/Docker Desktop provide it automatically; harmless there).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Host API endpoint (override to a Tailscale IP for a remote droplet).
+      ALIBI_API_URL: ${ALIBI_API_URL:-http://host.docker.internal:3100}
+      # Bot token + allowlist (set in .env or the shell environment).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      ALIBI_TELEGRAM_ALLOWED_USERS: ${ALIBI_TELEGRAM_ALLOWED_USERS:-}
+      # Persisted telegram_id -> api_key keystore (mounted volume below).
+      ALIBI_TELEGRAM_KEYSTORE: /data/telegram_keys.json
+      # Offline upload spool: documents received while the host API is briefly
+      # unreachable (boot-order race) are persisted here and drained when it
+      # returns. Same mounted volume, so spooled uploads survive restarts.
+      ALIBI_TELEGRAM_SPOOL: /data/spool
+    volumes:
+      # Keystore + offline spool survive container restarts.
+      - alibi_telegram_data:/data
+
+volumes:
+  alibi_telegram_data:

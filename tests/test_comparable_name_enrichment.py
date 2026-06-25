@@ -295,3 +295,20 @@ class TestEnrichPending:
         assert row["comparable_name_enriched"] is None
         second = enrich_pending_comparable_names(db, limit=50)
         assert {r.item_id for r in second} == {"d1"}
+
+
+# ===========================================================================
+# TestSchema (constrained decoding)
+# ===========================================================================
+
+
+class TestSchema:
+    @patch("alibi.enrichment.comparable_names.call_enrichment_llm")
+    def test_constrains_decoding_with_schema(self, mock_llm):
+        # The response_format schema is what makes the local model unable to emit
+        # malformed JSON on garbled batches — assert it is passed through.
+        from alibi.enrichment.comparable_names import _RESPONSE_FORMAT
+
+        mock_llm.return_value = [{"idx": 1, "comparable_name": "milk"}]
+        infer_comparable_names([{"name": "a"}])
+        assert mock_llm.call_args.kwargs["response_format"] is _RESPONSE_FORMAT

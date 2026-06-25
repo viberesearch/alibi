@@ -89,6 +89,40 @@ def list_items(
     return [_row_to_item(row) for row in rows]
 
 
+def list_warranty_expiring(
+    db: DatabaseManager,
+    ahead_days: int = 90,
+    expired_days: int = 30,
+) -> list[dict[str, Any]]:
+    """List active items whose warranty is expiring soon (or just expired).
+
+    Returns items whose ``warranty_expires`` falls between ``expired_days``
+    ago and ``ahead_days`` from now, ordered by soonest expiry first. This
+    backs the Telegram ``/warranty`` command without exposing raw SQL to the
+    thin bot.
+
+    Args:
+        db: Database manager instance.
+        ahead_days: How many days into the future to include (default 90).
+        expired_days: How many days of already-expired warranties to keep
+            (default 30) so recently lapsed warranties still surface.
+    """
+    sql = """
+        SELECT *
+        FROM items
+        WHERE warranty_expires IS NOT NULL
+          AND warranty_expires <= date('now', ?)
+          AND warranty_expires >= date('now', ?)
+          AND status = 'active'
+        ORDER BY warranty_expires ASC
+    """
+    rows = db.fetchall(
+        sql,
+        (f"+{int(ahead_days)} days", f"-{int(expired_days)} days"),
+    )
+    return [_row_to_item(row) for row in rows]
+
+
 def get_item(db: DatabaseManager, item_id: str) -> dict[str, Any] | None:
     """Get a single item by ID.
 

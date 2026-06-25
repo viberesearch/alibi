@@ -113,6 +113,39 @@ Rules:
   if not a counted pack.
 - Only the JSON object, no explanation."""
 
+# JSON schema constraining the combined reply's decoding so the local model cannot
+# emit malformed JSON (the deterministic "Invalid JSON in response" failures on
+# garbled OCR batches). Unlike the single passes, ONLY ``idx`` is required: every
+# field is optional so the model can still DROP a field per item — that absence is
+# this pass's "field dropped -> stays pending / single-pass fallback" signal
+# (``infer_combined`` keys on ``"unit" in raw`` etc.). Live-verified on gemma4:12b
+# that Ollama/llama.cpp honours the optional properties (the model omits keys not
+# in ``required`` rather than emitting them as null), so the present-vs-absent
+# distinction survives the grammar constraint. Gated by
+# ``config.ollama_structured_output``.
+_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "unit": {"type": ["string", "null"]},
+                    "unit_quantity": {"type": ["number", "string", "null"]},
+                    "comparable_name": {"type": ["string", "null"]},
+                    "category_path": {"type": ["string", "null"]},
+                    "attributes": {"type": ["object", "null"]},
+                    "pack_count": {"type": ["integer", "null"]},
+                },
+                "required": ["idx"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
 
 @dataclass
 class CombinedResult:
@@ -207,6 +240,7 @@ def infer_combined(
         ollama_url=ollama_url,
         timeout=timeout,
         label="Combined enrichment",
+        response_format=_RESPONSE_FORMAT,
     )
 
     units: dict[int, Any] = {}

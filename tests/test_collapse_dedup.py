@@ -4,10 +4,13 @@ from decimal import Decimal
 from uuid import uuid4
 
 from alibi.clouds.collapse import (
+    _dedupe_payments,
     _deduplicate_items,
+    _extract_items,
     _filter_non_product_items,
     _is_non_product_item,
     _item_metadata_score,
+    _tag_bundle,
 )
 from alibi.db.models import FactItem, UnitType
 
@@ -199,3 +202,110 @@ class TestDeduplicateItems:
 
     def test_empty_list(self):
         assert _deduplicate_items([]) == []
+
+
+class TestBundleAwareDeduplication:
+    """Within-bundle repeats are real purchases; cross-bundle dupes are merged."""
+
+    def test_within_bundle_repeats_kept(self):
+        # Four identical "Activia 1.80" lines on ONE receipt = four purchases.
+        items = [
+            _make_item(name="ACTIVIA", total_price=Decimal("1.80")) for _ in range(4)
+        ]
+        result = _deduplicate_items(items, bundle_ids=["b1", "b1", "b1", "b1"])
+        assert len(result) == 4
+
+    def test_cross_bundle_duplicate_photos_collapsed(self):
+        # The same receipt scanned twice: each bundle carries the same 4 lines.
+        # True count is the per-bundle max (4), not the sum (8) or one.
+        items = [
+            _make_item(name="ACTIVIA", total_price=Decimal("1.80")) for _ in range(8)
+        ]
+        bundle_ids = ["b1"] * 4 + ["b2"] * 4
+        result = _deduplicate_items(items, bundle_ids=bundle_ids)
+        assert len(result) == 4
+
+    def test_uneven_cross_bundle_keeps_max(self):
+        # One photo read 3 copies, the other read 4 — keep the richer count.
+        items = [_make_item(name="COLA", total_price=Decimal("2.00")) for _ in range(7)]
+        bundle_ids = ["b1"] * 3 + ["b2"] * 4
+        result = _deduplicate_items(items, bundle_ids=bundle_ids)
+        assert len(result) == 4
+
+    def test_no_bundle_ids_collapses_to_one(self):
+        # Legacy path (no bundle context) still collapses identical items.
+        items = [_make_item(name="MILK", total_price=Decimal("2.50")) for _ in range(3)]
+        assert len(_deduplicate_items(items)) == 1
+
+    def test_extract_items_keeps_same_bundle_repeats(self):
+        # Full path: 3 identical item atoms tagged to one bundle must yield 3
+        # fact_items (regression for the within-receipt over-merge bug).
+        atoms = _tag_bundle(
+            [
+                {
+                    "id": f"a{i}",
+                    "atom_type": "item",
+                    "data": {
+                        "name": "ACTIVIA",
+                        "total_price": "1.80",
+                        "quantity": "1",
+                    },
+                }
+                for i in range(3)
+            ],
+            "bundle-1",
+        )
+        items = _extract_items(atoms, "EUR")
+        assert len(items) == 3
+
+
+class TestDedupePayments:
+    """Same-charge payment observations (receipt + its slip) must collapse,
+    while genuine split/partial payments are preserved."""
+
+    def test_receipt_and_slip_duplicate_merged(self):
+        # The ALI MURAT case: receipt records the charge with no card_last4,
+        # the slip records the same amount with the card. -> one entry.
+        payments = [
+            {"method": "kredi karti", "amount": "1424.9"},
+            {"method": "credit card", "card_last4": "7201", "amount": "1424.9"},
+        ]
+        result = _dedupe_payments(payments)
+        assert len(result) == 1
+        assert result[0]["amount"] == "1424.9"
+        assert result[0]["card_last4"] == "7201"  # richer entry kept as base
+
+    def test_identical_no_card_merged(self):
+        payments = [
+            {"method": "card", "amount": "39.18"},
+            {"method": "card", "amount": "39.18"},
+        ]
+        assert len(_dedupe_payments(payments)) == 1
+
+    def test_different_amounts_kept(self):
+        # Partial payments summing to a total are NOT duplicates.
+        payments = [
+            {"method": "card", "amount": "122.00"},
+            {"method": "card", "amount": "4.00"},
+        ]
+        assert len(_dedupe_payments(payments)) == 2
+
+    def test_different_cards_same_amount_kept(self):
+        # Genuine split across two cards of equal value.
+        payments = [
+            {"method": "credit card", "card_last4": "1111", "amount": "25.00"},
+            {"method": "credit card", "card_last4": "2222", "amount": "25.00"},
+        ]
+        assert len(_dedupe_payments(payments)) == 2
+
+    def test_cash_and_card_same_amount_kept(self):
+        # Equal-value cash + card split must not be folded together.
+        payments = [
+            {"method": "cash", "amount": "20.00", "amount_tendered": "50.00"},
+            {"method": "credit card", "card_last4": "7201", "amount": "20.00"},
+        ]
+        assert len(_dedupe_payments(payments)) == 2
+
+    def test_unparseable_amounts_kept_separate(self):
+        payments = [{"method": "card"}, {"method": "card"}]
+        assert len(_dedupe_payments(payments)) == 2

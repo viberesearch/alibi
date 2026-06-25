@@ -196,6 +196,79 @@ class TestDetectSubscriptions:
         assert Decimal(str(patterns[0].avg_amount)) == Decimal("14.99")
         assert patterns[0].occurrences == 6
 
+    def test_supermarket_basket_not_a_subscription(self, db):
+        # A supermarket visited monthly with grocery baskets must NOT be
+        # reported as a subscription (recurring shopping != subscription).
+        base = date(2025, 7, 15)
+        for i in range(5):
+            ed = date(base.year, base.month + i, base.day)
+            doc_id = str(uuid4())
+            v2_store.store_document(
+                db,
+                Document(id=doc_id, file_path=f"/t/p{i}.jpg", file_hash=str(uuid4())),
+            )
+            bundle = Bundle(
+                id=str(uuid4()), document_id=doc_id, bundle_type=BundleType.BASKET
+            )
+            v2_store.store_bundle(db, bundle, [])
+            cloud = Cloud(id=str(uuid4()), status=CloudStatus.COLLAPSED)
+            v2_store.store_cloud(
+                db,
+                cloud,
+                CloudBundle(
+                    cloud_id=cloud.id,
+                    bundle_id=bundle.id,
+                    match_type=CloudMatchType.EXACT_AMOUNT,
+                ),
+            )
+            fact = Fact(
+                id=str(uuid4()),
+                cloud_id=cloud.id,
+                fact_type=FactType.PURCHASE,
+                vendor="Plus Discount Market",
+                total_amount=Decimal("15.00"),
+                currency="EUR",
+                event_date=ed,
+                status=FactStatus.CONFIRMED,
+            )
+            items = []
+            for name, cat in [
+                ("Milk", "Dairy"),
+                ("Bread", "Bakery"),
+                ("Eggs", "Dairy"),
+            ]:
+                item_atom = Atom(
+                    id=str(uuid4()),
+                    document_id=doc_id,
+                    atom_type=AtomType.ITEM,
+                    data={"name": name},
+                )
+                v2_store.store_atoms(db, [item_atom])
+                items.append(
+                    FactItem(
+                        id=str(uuid4()),
+                        fact_id=fact.id,
+                        atom_id=item_atom.id,
+                        name=name,
+                        category=cat,
+                    )
+                )
+            v2_store.store_fact(db, fact, items)
+        patterns = detect_subscriptions(db, min_occurrences=3)
+        assert not any("plus" in p.vendor_normalized for p in patterns)
+
+    def test_payment_intermediary_not_a_subscription(self, db):
+        base = date(2025, 7, 15)
+        for i in range(5):
+            _create_fact(
+                db,
+                "JCC PAYMENT SYSTEMS",
+                Decimal("20.00"),
+                date(base.year, base.month + i, base.day),
+            )
+        patterns = detect_subscriptions(db, min_occurrences=3)
+        assert not any("jcc" in p.vendor_normalized.lower() for p in patterns)
+
     def test_weekly_subscription(self, db):
         base = date(2025, 7, 1)
         for i in range(5):

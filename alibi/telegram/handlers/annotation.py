@@ -1,4 +1,4 @@
-"""Annotation command handlers for tagging facts and other entities."""
+"""Annotation command handlers — thin client over the host ``/annotations``."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from alibi.db.connection import get_db
-from alibi.services import annotation
+from alibi.telegram.api_client import AlibiAPIError
+from alibi.telegram.handlers._common import api_key_for, client
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -47,21 +47,15 @@ def _parse_tag_args(raw: str) -> tuple[str | None, str | None, str | None]:
 
     Returns (fact_id_or_None, key_or_None, value_or_None).
     """
-    # Tokenize, respecting double-quoted strings.
     token_re = re.compile(r'"([^"]*)"|\S+')
     tokens = [
         m.group(1) if m.group(1) is not None else m.group(0)
         for m in token_re.finditer(raw)
     ]
 
-    if not tokens:
-        return None, None, None
-
     if len(tokens) < 2:
-        # Not enough to have key + value, cannot parse.
         return None, None, None
 
-    # Check whether the first token is a fact_id (UUID-like).
     if _looks_like_id(tokens[0]):
         fact_id = tokens[0]
         rest = tokens[1:]
@@ -69,7 +63,6 @@ def _parse_tag_args(raw: str) -> tuple[str | None, str | None, str | None]:
         fact_id = None
         rest = tokens
 
-    # rest must be at least [key, value]
     if len(rest) < 2:
         return fact_id, None, None
 
@@ -100,10 +93,8 @@ async def tag_handler(message: Message) -> None:
         await message.answer("Usage: /tag [fact_id] <key> <value>")
         return
 
-    raw = raw_parts[1]
-    fact_id, key, value = _parse_tag_args(raw)
+    fact_id, key, value = _parse_tag_args(raw_parts[1])
 
-    # If fact_id was not embedded in the command, try to infer from reply.
     if not fact_id:
         fact_id = _extract_fact_id_from_reply(message)
 
@@ -113,29 +104,19 @@ async def tag_handler(message: Message) -> None:
         )
         return
 
-    if not key:
+    if not key or not value:
         await message.answer("Usage: /tag [fact_id] <key> <value>")
-        return
-
-    if not value:
-        await message.answer("Usage: /tag [fact_id] <key> <value>")
-        return
-
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized. Please run 'lt init' first.")
         return
 
     try:
-        annotation_id = annotation.annotate(
-            db,
-            target_type="fact",
-            target_id=fact_id,
+        annotation_id = await client.annotate_fact(
+            fact_id,
             annotation_type="user_tag",
             key=key,
             value=value,
+            api_key=api_key_for(message),
         )
-    except Exception as exc:
+    except AlibiAPIError as exc:
         logger.exception("tag_handler: failed to annotate fact %s", fact_id)
         await message.answer(f"Failed to add tag: {exc}")
         return
@@ -167,12 +148,13 @@ async def untag_handler(message: Message) -> None:
 
     annotation_id = parts[1]
 
-    db = get_db()
-    if not db.is_initialized():
-        await message.answer("Database not initialized. Please run 'lt init' first.")
+    try:
+        ok = await client.delete_annotation(annotation_id, api_key=api_key_for(message))
+    except AlibiAPIError:
+        logger.exception("untag_handler: failed to delete %s", annotation_id)
+        await message.answer("Could not delete annotation. Please try again.")
         return
 
-    ok = annotation.delete_annotation(db, annotation_id)
     if ok:
         await message.answer(
             f"Annotation deleted.\nAnnotation ID: `{annotation_id}`",

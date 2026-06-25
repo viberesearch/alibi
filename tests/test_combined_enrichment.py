@@ -134,6 +134,21 @@ class TestInferCombined:
         mock_llm.side_effect = Exception("down")
         assert infer_combined([{"name": "X"}]) == ({}, {}, {}, {})
 
+    @patch("alibi.extraction.structurer.structure_ocr_text")
+    def test_constrains_decoding_with_optional_schema(self, mock_llm):
+        # The combined schema must reach the structurer so the local model emits
+        # valid JSON. Only ``idx`` is required: every field stays optional so the
+        # model can still DROP a field (key-absent == pending), the present-vs-
+        # absent distinction infer_combined relies on. Verified live on gemma4.
+        from alibi.enrichment.combined import _RESPONSE_FORMAT
+
+        mock_llm.return_value = {"items": []}
+        infer_combined([{"name": "X"}])
+        passed = mock_llm.call_args.kwargs["response_format"]
+        assert passed is _RESPONSE_FORMAT
+        item_schema = passed["properties"]["items"]["items"]
+        assert item_schema["required"] == ["idx"]  # every other field droppable
+
 
 # ===========================================================================
 # TestEnrichItems — write-back, needs-gating, field interaction

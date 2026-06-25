@@ -14,10 +14,29 @@ from alibi.services.auth import (
     list_users,
     remove_contact,
     remove_contact_by_value,
+    resolve_user_ref,
     revoke_api_key,
     update_user,
     validate_api_key,
 )
+
+
+class TestResolveUserRef:
+    def test_resolves_by_name_case_insensitive(self, db):
+        user = create_user(db, "Dmitry")
+        assert resolve_user_ref(db, "Dmitry") == user["id"]
+        assert resolve_user_ref(db, "dmitry") == user["id"]
+
+    def test_resolves_by_id(self, db):
+        user = create_user(db, "Dmitry")
+        assert resolve_user_ref(db, user["id"]) == user["id"]
+
+    def test_unknown_returns_none(self, db):
+        create_user(db, "Dmitry")
+        assert resolve_user_ref(db, "Nobody") is None
+
+    def test_blank_returns_none(self, db):
+        assert resolve_user_ref(db, "") is None
 
 
 class TestCreateUser:

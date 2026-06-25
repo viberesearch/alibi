@@ -1,11 +1,21 @@
-"""Tests for Telegram enrichment review handler with inline keyboards."""
+"""Tests for the thin Telegram enrichment review handler.
+
+The bot no longer touches the DB: ``enrich_handler`` and the confirm/reject
+callbacks are thin HTTP clients of the host ``/enrichment`` endpoints. These
+tests mock the shared :class:`AlibiAPIClient` (patched as
+``alibi.telegram.handlers.enrichment.client``) and assert the right calls are
+made and replies are formatted from the API response. The pure-helper tests
+(:class:`TestHelpers`, :class:`TestEnrichAction`) need no change.
+"""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiogram.types import Message as TgMessage
 
+from alibi.telegram.api_client import AlibiAPIError
 from alibi.telegram.handlers.enrichment import (
     EnrichAction,
     _esc,
@@ -23,27 +33,16 @@ from alibi.telegram.handlers.enrichment import (
 @pytest.fixture
 def mock_message():
     """Create a mock Telegram Message object."""
-    msg = AsyncMock()
+    msg = MagicMock()
     msg.answer = AsyncMock()
     return msg
 
 
 @pytest.fixture
-def mock_db():
-    """Create a mock DatabaseManager."""
-    db = MagicMock()
-    db.is_initialized.return_value = True
-    db.fetchall.return_value = []
-    return db
-
-
-@pytest.fixture
 def mock_callback():
     """Create a mock CallbackQuery object."""
-    from aiogram.types import Message as TgMessage
-
     cb = AsyncMock()
-    cb.message = AsyncMock(spec=TgMessage)
+    cb.message = MagicMock(spec=TgMessage)
     cb.message.text = "Some item text"
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
@@ -70,6 +69,20 @@ def _make_queue_item(
         "fact_id": "fact-001",
         "vendor": vendor,
     }
+
+
+def _make_client(queue=None, stats=None) -> MagicMock:
+    """Build a MagicMock AlibiAPIClient with async methods stubbed."""
+    client = MagicMock()
+    client.enrichment_review = AsyncMock(
+        return_value=queue if queue is not None else []
+    )
+    client.enrichment_stats = AsyncMock(
+        return_value=stats if stats is not None else {"pending_review": 0}
+    )
+    client.confirm_enrichment = AsyncMock(return_value=True)
+    client.reject_enrichment = AsyncMock(return_value=True)
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -153,56 +166,38 @@ class TestEnrichAction:
 
 class TestEnrichHandler:
     @pytest.mark.asyncio
-    async def test_empty_queue_shows_no_items_message(self, mock_message, mock_db):
+    async def test_empty_queue_shows_no_items_message(self, mock_message):
         """Empty queue returns a helpful 'no pending items' message."""
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = []
+        client = _make_client(queue=[])
 
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         mock_message.answer.assert_called_once()
         text = mock_message.answer.call_args[0][0]
         assert "No items pending" in text
-        mock_svc.get_review_stats.assert_not_called()
+        client.enrichment_stats.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_queue_with_items_sends_header_and_item_messages(
-        self, mock_message, mock_db
-    ):
+    async def test_queue_with_items_sends_header_and_item_messages(self, mock_message):
         """One item in queue: sends header message + one item message."""
-        item = _make_queue_item()
-        stats = {"pending_review": 1}
+        client = _make_client(queue=[_make_queue_item()], stats={"pending_review": 1})
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = [item]
-            mock_svc.get_review_stats.return_value = stats
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         # One header + one item card = 2 calls
         assert mock_message.answer.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_item_message_contains_name_brand_source(self, mock_message, mock_db):
+    async def test_item_message_contains_name_brand_source(self, mock_message):
         """Item card message contains the item name, brand, and source."""
         item = _make_queue_item(
             name="Olive Oil", brand="Minerva", source="openfoodfacts"
         )
-        stats = {"pending_review": 1}
+        client = _make_client(queue=[item], stats={"pending_review": 1})
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = [item]
-            mock_svc.get_review_stats.return_value = stats
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         # Second call is the item card (index 1)
@@ -213,20 +208,13 @@ class TestEnrichHandler:
         assert "openfoodfacts" in text
 
     @pytest.mark.asyncio
-    async def test_item_message_has_inline_keyboard(self, mock_message, mock_db):
+    async def test_item_message_has_inline_keyboard(self, mock_message):
         """Item card message includes an InlineKeyboardMarkup."""
         from aiogram.types import InlineKeyboardMarkup
 
-        item = _make_queue_item()
-        stats = {"pending_review": 1}
+        client = _make_client(queue=[_make_queue_item()], stats={"pending_review": 1})
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = [item]
-            mock_svc.get_review_stats.return_value = stats
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         item_call = mock_message.answer.call_args_list[1]
@@ -237,18 +225,11 @@ class TestEnrichHandler:
         assert len(keyboard.inline_keyboard[0]) == 2
 
     @pytest.mark.asyncio
-    async def test_inline_keyboard_button_labels(self, mock_message, mock_db):
+    async def test_inline_keyboard_button_labels(self, mock_message):
         """Confirm and Reject buttons have correct text labels."""
-        item = _make_queue_item()
-        stats = {"pending_review": 1}
+        client = _make_client(queue=[_make_queue_item()], stats={"pending_review": 1})
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = [item]
-            mock_svc.get_review_stats.return_value = stats
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         item_call = mock_message.answer.call_args_list[1]
@@ -259,38 +240,26 @@ class TestEnrichHandler:
         assert any("Reject" in t for t in button_texts)
 
     @pytest.mark.asyncio
-    async def test_multiple_items_in_queue(self, mock_message, mock_db):
+    async def test_multiple_items_in_queue(self, mock_message):
         """Three items in queue produces header + 3 item messages."""
         items = [
             _make_queue_item(item_id=f"id-{i}", name=f"Item {i}") for i in range(3)
         ]
-        stats = {"pending_review": 3}
+        client = _make_client(queue=items, stats={"pending_review": 3})
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = items
-            mock_svc.get_review_stats.return_value = stats
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         # 1 header + 3 items
         assert mock_message.answer.call_count == 4
 
     @pytest.mark.asyncio
-    async def test_null_brand_renders_dash(self, mock_message, mock_db):
+    async def test_null_brand_renders_dash(self, mock_message):
         """Item with no brand renders em-dash placeholder."""
         item = _make_queue_item(brand=None, category=None)
-        stats = {"pending_review": 1}
+        client = _make_client(queue=[item], stats={"pending_review": 1})
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = [item]
-            mock_svc.get_review_stats.return_value = stats
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
         item_call = mock_message.answer.call_args_list[1]
@@ -298,17 +267,28 @@ class TestEnrichHandler:
         assert "—" in text
 
     @pytest.mark.asyncio
-    async def test_get_review_queue_called_with_limit_5(self, mock_message, mock_db):
-        """enrich_handler calls get_review_queue with limit=5."""
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.get_review_queue.return_value = []
+    async def test_review_called_with_limit_5(self, mock_message):
+        """enrich_handler calls enrichment_review with limit=5."""
+        client = _make_client(queue=[])
 
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await enrich_handler(mock_message)
 
-        mock_svc.get_review_queue.assert_called_once_with(mock_db, limit=5)
+        client.enrichment_review.assert_awaited_once()
+        assert client.enrichment_review.await_args.kwargs["limit"] == 5
+
+    @pytest.mark.asyncio
+    async def test_api_error_shows_friendly_message(self, mock_message):
+        """An API error while loading the queue shows a friendly message."""
+        client = _make_client()
+        client.enrichment_review = AsyncMock(side_effect=AlibiAPIError("500: boom"))
+
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
+            await enrich_handler(mock_message)
+
+        mock_message.answer.assert_called_once()
+        text = mock_message.answer.call_args[0][0]
+        assert "review queue" in text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -318,19 +298,17 @@ class TestEnrichHandler:
 
 class TestHandleConfirm:
     @pytest.mark.asyncio
-    async def test_confirm_success_edits_message(self, mock_callback, mock_db):
+    async def test_confirm_success_edits_message(self, mock_callback):
         """Successful confirm edits message text and removes keyboard."""
         callback_data = EnrichAction(action="confirm", item_id="item-uuid-001")
+        client = _make_client()
+        client.confirm_enrichment = AsyncMock(return_value=True)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.confirm_enrichment.return_value = True
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_confirm(mock_callback, callback_data)
 
-        mock_svc.confirm_enrichment.assert_called_once_with(mock_db, "item-uuid-001")
+        client.confirm_enrichment.assert_awaited_once()
+        assert client.confirm_enrichment.await_args.args[0] == "item-uuid-001"
         mock_callback.message.edit_text.assert_called_once()
         edit_call = mock_callback.message.edit_text.call_args
         new_text = edit_call[0][0]
@@ -339,19 +317,14 @@ class TestHandleConfirm:
         assert edit_call[1].get("reply_markup") is None
 
     @pytest.mark.asyncio
-    async def test_confirm_success_appends_to_original_text(
-        self, mock_callback, mock_db
-    ):
+    async def test_confirm_success_appends_to_original_text(self, mock_callback):
         """Confirmed status is appended to the existing message text."""
         mock_callback.message.text = "Olive Oil\nBrand: Minerva"
         callback_data = EnrichAction(action="confirm", item_id="item-uuid-001")
+        client = _make_client()
+        client.confirm_enrichment = AsyncMock(return_value=True)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.confirm_enrichment.return_value = True
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_confirm(mock_callback, callback_data)
 
         edit_call = mock_callback.message.edit_text.call_args
@@ -359,32 +332,26 @@ class TestHandleConfirm:
         assert new_text.startswith("Olive Oil\nBrand: Minerva")
 
     @pytest.mark.asyncio
-    async def test_confirm_not_found_shows_alert(self, mock_callback, mock_db):
+    async def test_confirm_not_found_shows_alert(self, mock_callback):
         """When item not found, shows alert and skips edit."""
         callback_data = EnrichAction(action="confirm", item_id="missing-uuid")
+        client = _make_client()
+        client.confirm_enrichment = AsyncMock(return_value=False)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.confirm_enrichment.return_value = False
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_confirm(mock_callback, callback_data)
 
         mock_callback.message.edit_text.assert_not_called()
         mock_callback.answer.assert_any_call("Item not found", show_alert=True)
 
     @pytest.mark.asyncio
-    async def test_confirm_always_calls_answer(self, mock_callback, mock_db):
+    async def test_confirm_always_calls_answer(self, mock_callback):
         """callback.answer() is always called to dismiss loading spinner."""
         callback_data = EnrichAction(action="confirm", item_id="item-uuid-001")
+        client = _make_client()
+        client.confirm_enrichment = AsyncMock(return_value=True)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.confirm_enrichment.return_value = True
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_confirm(mock_callback, callback_data)
 
         # answer() must be called (to dismiss the spinner)
@@ -393,19 +360,17 @@ class TestHandleConfirm:
 
 class TestHandleReject:
     @pytest.mark.asyncio
-    async def test_reject_success_edits_message(self, mock_callback, mock_db):
+    async def test_reject_success_edits_message(self, mock_callback):
         """Successful reject edits message text and removes keyboard."""
         callback_data = EnrichAction(action="reject", item_id="item-uuid-002")
+        client = _make_client()
+        client.reject_enrichment = AsyncMock(return_value=True)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.reject_enrichment.return_value = True
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_reject(mock_callback, callback_data)
 
-        mock_svc.reject_enrichment.assert_called_once_with(mock_db, "item-uuid-002")
+        client.reject_enrichment.assert_awaited_once()
+        assert client.reject_enrichment.await_args.args[0] == "item-uuid-002"
         mock_callback.message.edit_text.assert_called_once()
         edit_call = mock_callback.message.edit_text.call_args
         new_text = edit_call[0][0]
@@ -413,19 +378,14 @@ class TestHandleReject:
         assert edit_call[1].get("reply_markup") is None
 
     @pytest.mark.asyncio
-    async def test_reject_success_appends_to_original_text(
-        self, mock_callback, mock_db
-    ):
+    async def test_reject_success_appends_to_original_text(self, mock_callback):
         """Rejected status is appended to the existing message text."""
         mock_callback.message.text = "Olive Oil\nBrand: Minerva"
         callback_data = EnrichAction(action="reject", item_id="item-uuid-002")
+        client = _make_client()
+        client.reject_enrichment = AsyncMock(return_value=True)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.reject_enrichment.return_value = True
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_reject(mock_callback, callback_data)
 
         edit_call = mock_callback.message.edit_text.call_args
@@ -433,32 +393,26 @@ class TestHandleReject:
         assert new_text.startswith("Olive Oil\nBrand: Minerva")
 
     @pytest.mark.asyncio
-    async def test_reject_not_found_shows_alert(self, mock_callback, mock_db):
+    async def test_reject_not_found_shows_alert(self, mock_callback):
         """When item not found, shows alert and skips edit."""
         callback_data = EnrichAction(action="reject", item_id="missing-uuid")
+        client = _make_client()
+        client.reject_enrichment = AsyncMock(return_value=False)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.reject_enrichment.return_value = False
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_reject(mock_callback, callback_data)
 
         mock_callback.message.edit_text.assert_not_called()
         mock_callback.answer.assert_any_call("Item not found", show_alert=True)
 
     @pytest.mark.asyncio
-    async def test_reject_always_calls_answer(self, mock_callback, mock_db):
+    async def test_reject_always_calls_answer(self, mock_callback):
         """callback.answer() is always called to dismiss loading spinner."""
         callback_data = EnrichAction(action="reject", item_id="item-uuid-002")
+        client = _make_client()
+        client.reject_enrichment = AsyncMock(return_value=True)
 
-        with (
-            patch("alibi.telegram.handlers.enrichment.get_db", return_value=mock_db),
-            patch("alibi.telegram.handlers.enrichment.enrichment_review") as mock_svc,
-        ):
-            mock_svc.reject_enrichment.return_value = True
-
+        with patch("alibi.telegram.handlers.enrichment.client", new=client):
             await handle_reject(mock_callback, callback_data)
 
         assert mock_callback.answer.called

@@ -114,6 +114,28 @@ class TestInferJurisdiction:
         ext = {"vendor": "Generic Shop", "raw_text": "Item 1.00 Total 1.00"}
         assert infer_jurisdiction(ext) is None
 
+    def test_russia_from_cyrillic_place(self) -> None:
+        ext = {"vendor_address": "Москва, ул. Тверская", "raw_text": "Молоко 80 ИТОГО"}
+        assert infer_jurisdiction(ext) == "RU"
+
+    def test_russia_from_rouble_and_nds(self) -> None:
+        ext = {"vendor": "Пятёрочка", "raw_text": "ИТОГО 540 ₽  НДС 20%"}
+        assert infer_jurisdiction(ext) == "RU"
+
+    def test_russia_from_cyrillic_script_fallback(self) -> None:
+        # Substantial Cyrillic, no place/currency token.
+        ext = {"vendor": "Магазин", "raw_text": "Хлеб Масло Сыр Колбаса Чай"}
+        assert infer_jurisdiction(ext) == "RU"
+
+    def test_russia_latin_place(self) -> None:
+        ext = {"vendor_address": "Moscow, Russia", "raw_text": "Total 540 RUB"}
+        assert infer_jurisdiction(ext) == "RU"
+
+    def test_spice_rub_word_does_not_trigger_russia(self) -> None:
+        # A "DRY RUB" product with no Russian signal must not become RU.
+        ext = {"vendor": "BBQ Shop", "raw_text": "DRY RUB SEASONING 4.99 Total 4.99"}
+        assert infer_jurisdiction(ext) is None
+
     def test_north_cyprus_wins_over_turkey_tokens(self) -> None:
         # Both a north-Cyprus place and Turkish lira present.
         ext = {"vendor_address": "Gazimağusa, KKTC", "raw_text": "KDV TL Istanbul"}
@@ -145,6 +167,30 @@ class TestResolveCurrency:
         ext = {"currency": "EUR", "raw_text": "Total 5.00"}
         assert resolve_currency(ext, None) == "EUR"
 
+    def test_russia_resolves_to_rub(self) -> None:
+        ext = {"raw_text": "ИТОГО 540 ₽"}
+        assert resolve_currency(ext, "RU") == "RUB"
+
+    def test_rouble_cue_without_jurisdiction(self) -> None:
+        ext = {"currency": "", "raw_text": "Сумма 540 ₽"}
+        assert resolve_currency(ext, None) == "RUB"
+
+    def test_printed_eur_overrides_cyrillic_inferred_rub(self) -> None:
+        # A Russian-language venue that prices in EUR: the Cyrillic room name
+        # forces RU jurisdiction, but the printed total is explicitly EUR with
+        # no rouble cue anywhere -> the printed currency must win.
+        ext = {
+            "vendor": "LITTLE SINS COFFEE BAR",
+            "currency": "RUB",
+            "raw_text": "Table # 1 (Основной зал)\nTotal 3.00 eur\nCard 3.00 eur",
+        }
+        assert resolve_currency(ext, "RU") == "EUR"
+
+    def test_printed_guard_keeps_rub_when_rouble_cue_present(self) -> None:
+        # Both EUR and a rouble cue printed -> multi-currency, jurisdiction wins.
+        ext = {"currency": "EUR", "raw_text": "Итого 540 ₽  (≈ 5 eur)  НДС 20%"}
+        assert resolve_currency(ext, "RU") == "RUB"
+
 
 class TestApplyJurisdiction:
     def test_canada_sets_country_and_corrects_currency(self) -> None:
@@ -166,6 +212,28 @@ class TestApplyJurisdiction:
         apply_jurisdiction(ext)
         assert ext["country"] == "CY-NORTH"
         assert ext["currency"] == "TRY"
+
+    def test_cyrillic_language_with_eur_leaves_country_unknown(self) -> None:
+        # Russian-speaking venue pricing in EUR: language is not a country.
+        # Don't fabricate RU; leave country unknown and honour the printed EUR.
+        ext = {
+            "vendor": "LITTLE SINS COFFEE BAR",
+            "currency": "RUB",
+            "raw_text": "Table # 1 (Основной зал)\nTotal 3.00 eur\nCard 3.00 eur",
+        }
+        apply_jurisdiction(ext)
+        assert ext.get("country") is None
+        assert ext["currency"] == "EUR"
+
+    def test_russian_place_name_pins_country_even_with_eur(self) -> None:
+        # A real Russian place name pins RU; an EUR invoice keeps EUR currency.
+        ext = {
+            "currency": "RUB",
+            "raw_text": "ООО Ромашка  Санкт-Петербург  Total 100.00 eur",
+        }
+        apply_jurisdiction(ext)
+        assert ext["country"] == "RU"
+        assert ext["currency"] == "EUR"
 
     def test_default_country_does_not_override_currency(self) -> None:
         # No jurisdiction signal: fall back to default country, keep currency.

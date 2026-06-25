@@ -20,8 +20,11 @@ of Cyprus (CY / EUR / VAT-ΦΠΑ).
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # --- Jurisdiction -> canonical currency (ISO 4217) --------------------------
 JURISDICTION_CURRENCY: dict[str, str] = {
@@ -48,6 +51,7 @@ JURISDICTION_TAX_REGIME: dict[str, str] = {
     "DE": "vat",
     "GR": "vat",
     "TR": "vat",
+    "RU": "vat",  # НДС is a VAT
     "CA": "sales_tax",  # GST/HST/PST
     "US": "sales_tax",
     "GB": "vat",
@@ -159,6 +163,30 @@ _CYPRUS_TOKENS_GREEK = (
     "ΠΑΦΟΣ",
 )
 
+# Russia place names. Latin forms are matched against the folded blob; Cyrillic
+# forms are matched as-is against the raw uppercased text (like the Greek set).
+_RUSSIA_TOKENS = (
+    "RUSSIA",
+    "MOSCOW",
+    "MOSKVA",
+    "SAINT PETERSBURG",
+    "ST PETERSBURG",
+    "PETERSBURG",
+    "NOVOSIBIRSK",
+    "YEKATERINBURG",
+    "KAZAN",
+    "ROSSIYA",
+)
+_RUSSIA_TOKENS_CYRILLIC = (
+    "РОССИЯ",
+    "МОСКВА",
+    "САНКТ-ПЕТЕРБУРГ",
+    "ПЕТЕРБУРГ",
+    "НОВОСИБИРСК",
+    "ЕКАТЕРИНБУРГ",
+    "КАЗАНЬ",
+)
+
 # Canada-specific tax-term cues. HST/PST/QST and French-Canadian TPS/TVQ are
 # unambiguous. Bare "GST" is excluded because on restaurant POS slips it
 # abbreviates "GUESTS" ("GST 2"); a real GST *tax* line (followed by a percent
@@ -180,6 +208,11 @@ _ATU_VAT_RE = re.compile(r"\bATU\s?\d{8}\b")  # Austrian UID
 # Greek docs) it is a Cyprus fallback signal, and the currency is EUR either way.
 _FPA_RE = re.compile(r"[ΦF][ΠP][AΑ]")
 _GREEK_RE = re.compile(r"[Α-Ωα-ω]")  # Greek script presence
+_CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")  # Cyrillic script presence
+# Russian-Ruble currency cues and the Russian VAT marker НДС. Bare Latin "RUB"
+# is excluded (homograph of a spice "rub"); it only counts next to an amount.
+_RUB_CUES = ("₽", "РУБ", "НДС")
+_RUB_AMOUNT_RE = re.compile(r"\d[\d.,]*\s*(?:₽|РУБ|Р\.|\bRUB\b)")
 # Accent folding for uppercase Latin/Turkish/German diacritics (blob is
 # uppercased before translation, so only uppercase forms are mapped).
 _ACCENTS = str.maketrans(
@@ -252,6 +285,26 @@ def infer_jurisdiction(extracted: dict[str, Any]) -> str | None:
     if _any_token(blob, _TURKEY_TOKENS):
         return "TR"
 
+    # 4b. Russia — STRONG signals: a Cyrillic/Latin Russian place name or a
+    #     ₽/РУБ/НДС currency-or-VAT cue. These pin the country regardless of the
+    #     printed currency (a Russian vendor may still invoice in EUR).
+    if (
+        _any_token(blob, _RUSSIA_TOKENS)
+        or any(t in raw_upper for t in _RUSSIA_TOKENS_CYRILLIC)
+        or _has_rub_cue(blob)
+    ):
+        return "RU"
+    # 4c. Cyrillic *script* alone is a LANGUAGE signal, not a country: Russian is
+    #     spoken across many EUR/other-currency countries. Treat heavy Cyrillic as
+    #     Russia ONLY when no different currency is explicitly printed -- otherwise
+    #     a Russian-speaking cafe that prices in EUR ("Основной зал" + "3.00 eur")
+    #     would be mislabelled RU/RUB. When a foreign currency is printed we leave
+    #     the country unknown rather than fabricate one from language.
+    if len(_CYRILLIC_RE.findall(blob)) >= 5:
+        printed = _printed_currency(blob)
+        if printed is None or printed == "RUB":
+            return "RU"
+
     # 5. Republic of Cyprus: place names (Latin or Greek), or the Greek VAT
     #    marker ΦΠΑ that appears on essentially every Cyprus receipt.
     if (
@@ -285,6 +338,44 @@ def _has_try_cue(blob: str) -> bool:
     )
 
 
+def _has_rub_cue(blob: str) -> bool:
+    return (
+        "₽" in blob
+        or _any_token(blob, _RUB_CUES)
+        or _RUB_AMOUNT_RE.search(blob) is not None
+    )
+
+
+def _currency_has_evidence(blob: str, code: str) -> bool:
+    """True if ISO ``code`` has an explicit symbol/code/cue printed in ``blob``."""
+    if code == "EUR":
+        return "€" in blob or _contains_word(blob, "EUR")
+    if code == "GBP":
+        return "£" in blob or _contains_word(blob, "GBP")
+    if code == "USD":
+        return _contains_word(blob, "USD")
+    if code == "RUB":
+        return _has_rub_cue(blob)
+    if code in ("TRY", "TL"):
+        return _has_try_cue(blob)
+    return False
+
+
+def _printed_currency(blob: str) -> str | None:
+    """Return the single currency explicitly printed in the text, or None.
+
+    Detects only unambiguous symbols/codes -- the bare ``$`` is excluded because
+    USD/CAD/AUD ambiguity is the jurisdiction layer's job, not this guard's.
+    Returns None when zero or more than one distinct currency is printed (a real
+    multi-currency receipt is left to the jurisdiction-canonical logic).
+    """
+    found = set()
+    for code in ("EUR", "GBP", "USD", "RUB", "TRY"):
+        if _currency_has_evidence(blob, code):
+            found.add(code)
+    return found.pop() if len(found) == 1 else None
+
+
 def resolve_currency(extracted: dict[str, Any], jurisdiction: str | None) -> str | None:
     """Resolve the canonical currency given the inferred jurisdiction.
 
@@ -308,12 +399,39 @@ def resolve_currency(extracted: dict[str, Any], jurisdiction: str | None) -> str
     if jurisdiction in ("TR", "CY-NORTH"):
         return "TRY"
     if jurisdiction and jurisdiction in JURISDICTION_CURRENCY:
-        return JURISDICTION_CURRENCY[jurisdiction]
+        canonical = JURISDICTION_CURRENCY[jurisdiction]
+        # Printed-currency guard: a jurisdiction inferred from language/script
+        # alone (e.g. a Cyrillic room name "Основной зал" -> RU) must not
+        # override an explicitly printed currency. When the receipt prints a
+        # single, different currency and shows NO cue for the canonical one
+        # (no ₽/РУБ/НДС for RUB, etc.), the printed currency is authoritative.
+        # A genuine multi-currency receipt prints >1 currency -> printed is None
+        # -> canonical wins, preserving the Northern-Cyprus/Canada behaviour.
+        printed = _printed_currency(blob)
+        if (
+            printed
+            and printed != canonical
+            and not _currency_has_evidence(blob, canonical)
+        ):
+            logger.info(
+                "Currency guard: printed %s overrides %s-canonical %s",
+                printed,
+                jurisdiction,
+                canonical,
+            )
+            return printed
+        return canonical
 
-    # 2. Unknown jurisdiction: derive from unambiguous cues/symbols in the text
+    # 2. Unknown jurisdiction: trust an explicitly printed currency first (a word
+    #    like "EUR"/"USD" or a symbol), then fall back to unambiguous symbol cues,
     #    rather than trusting a possibly-stale currency field.
+    printed = _printed_currency(blob)
+    if printed:
+        return printed
     if _has_try_cue(blob):
         return "TRY"
+    if _has_rub_cue(blob):
+        return "RUB"
     if "€" in blob:
         return "EUR"
     if "£" in blob:

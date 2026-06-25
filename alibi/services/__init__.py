@@ -92,6 +92,7 @@ from alibi.services.items import (
     get_item_documents,
     get_item_facts,
     list_items,
+    list_warranty_expiring,
     update_item,
 )
 from alibi.services.item_stars import (
@@ -99,6 +100,7 @@ from alibi.services.item_stars import (
     basket_composition,
     list_attribute_facets,
     list_item_stars,
+    price_by_state,
     price_trend,
     rebuild_item_stars,
     refresh_item_stars_for_document,
@@ -170,6 +172,7 @@ __all__ = [
     "scan_yaml_corrections",
     # items
     "list_items",
+    "list_warranty_expiring",
     "get_item",
     "get_item_documents",
     "get_item_facts",
@@ -183,6 +186,7 @@ __all__ = [
     "refresh_item_stars_for_items",
     "list_item_stars",
     "avg_comparable_price",
+    "price_by_state",
     "price_trend",
     "basket_composition",
     "list_attribute_facets",

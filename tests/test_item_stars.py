@@ -509,6 +509,110 @@ class TestAggregations:
         by_size = {r["size"]: r["avg_comparable_unit_price"] for r in rows}
         assert by_size == {"l": pytest.approx(0.30), "m": pytest.approx(0.20)}
 
+    def test_price_by_state(self, db: DatabaseManager) -> None:
+        """Multi-state products surface per-state prices; single-state omitted."""
+        _store_fact_with_items(
+            db,
+            items=[
+                # salmon: TWO states within kg -> a real comparison, included.
+                {
+                    "name": "Fresh salmon",
+                    "comparable_name": "salmon",
+                    "total_price": 27.0,
+                    "comparable_unit_price": 27.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "fresh"},
+                },
+                {
+                    "name": "Smoked salmon",
+                    "comparable_name": "salmon",
+                    "total_price": 58.0,
+                    "comparable_unit_price": 58.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "cured"},
+                },
+                # sugar: only ONE state -> nothing to compare, omitted.
+                {
+                    "name": "White sugar",
+                    "comparable_name": "sugar",
+                    "total_price": 1.0,
+                    "comparable_unit_price": 1.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "dried"},
+                },
+                # stateless item -> never considered.
+                {
+                    "name": "Mystery",
+                    "comparable_name": "mystery",
+                    "total_price": 5.0,
+                    "comparable_unit_price": 5.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {},
+                },
+            ],
+        )
+        rows = svc.price_by_state(db)
+        names = {r["comparable_name"] for r in rows}
+        assert names == {"salmon"}  # sugar (1 state) + mystery (no state) excluded
+        by_state = {r["state"]: r["avg_comparable_unit_price"] for r in rows}
+        assert by_state == {"fresh": pytest.approx(27.0), "cured": pytest.approx(58.0)}
+        # ordered cheapest-first within the product
+        assert [r["state"] for r in rows] == ["fresh", "cured"]
+
+    def test_price_by_state_min_states_3(self, db: DatabaseManager) -> None:
+        """min_states raises the bar: a 2-state product drops out at min_states=3."""
+        _store_fact_with_items(
+            db,
+            items=[
+                {
+                    "name": "Fresh salmon",
+                    "comparable_name": "salmon",
+                    "total_price": 27.0,
+                    "comparable_unit_price": 27.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "fresh"},
+                },
+                {
+                    "name": "Smoked salmon",
+                    "comparable_name": "salmon",
+                    "total_price": 58.0,
+                    "comparable_unit_price": 58.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "cured"},
+                },
+            ],
+        )
+        assert svc.price_by_state(db, min_states=3) == []
+        assert len(svc.price_by_state(db, min_states=2)) == 2
+
+    def test_price_by_state_units_not_blended(self, db: DatabaseManager) -> None:
+        """A product split across units is two separate comparison groups, so a
+        single state in each is NOT a multi-state comparison."""
+        _store_fact_with_items(
+            db,
+            items=[
+                {
+                    "name": "Fresh thing",
+                    "comparable_name": "thing",
+                    "total_price": 2.0,
+                    "comparable_unit_price": 2.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "fresh"},
+                },
+                {
+                    "name": "Canned thing",
+                    "comparable_name": "thing",
+                    "total_price": 3.0,
+                    "comparable_unit_price": 3.0,
+                    "comparable_unit": UnitType.LITER,
+                    "attributes": {"state": "canned"},
+                },
+            ],
+        )
+        # fresh is the only kg state, canned the only l state -> neither group has
+        # >= 2 states, so nothing is returned.
+        assert svc.price_by_state(db) == []
+
     def test_list_attribute_facets(self, db: DatabaseManager) -> None:
         _store_fact_with_items(
             db,
@@ -633,6 +737,54 @@ class TestAggregations:
         assert by_cat["Dairy"]["item_count"] == 2
         assert by_cat["Dairy"]["total_spent"] == pytest.approx(2.6)
 
+    def test_basket_excludes_non_product_lines(self, db: DatabaseManager) -> None:
+        """Tax / tip / "non_item" adjustment lines are not basket spend."""
+        fact_id, _ = _store_fact_with_items(
+            db,
+            items=[
+                {
+                    "name": "Cheese",
+                    "category": "Dairy",
+                    "total_price": 5.0,
+                    "category_path": "food > dairy > cheese",
+                },
+                # A tip line the taxonomy filed under the adjustment branch.
+                {
+                    "name": "TIP",
+                    "category": "Tip",
+                    "total_price": 2.0,
+                    "category_path": "adjustment > tip",
+                },
+                # A broad-category Non_Item with no adjustment path.
+                {"name": "Custom amount", "category": "Non_Item", "total_price": 9.0},
+            ],
+        )
+        # category_path isn't persisted by store_fact, so set it like the pass.
+        db.execute(
+            "UPDATE fact_items SET category_path = 'adjustment > tip' WHERE name='TIP'"
+        )
+        db.execute(
+            "UPDATE fact_items SET category = 'Tip', category_path='adjustment > tip' "
+            "WHERE name='TIP'"
+        )
+        db.execute(
+            "UPDATE fact_items SET category = 'Non_Item' WHERE name='Custom amount'"
+        )
+        db.execute(
+            "UPDATE fact_items SET category='Dairy', category_path='food > dairy > cheese' "
+            "WHERE name='Cheese'"
+        )
+        db.get_connection().commit()
+        svc.refresh_item_stars_for_fact(db, fact_id)
+
+        rows = svc.basket_composition(db, by="category")
+        cats = {r["category"] for r in rows}
+        assert "Dairy" in cats
+        assert "Tip" not in cats  # adjustment branch excluded
+        assert "Non_Item" not in cats  # broad non-product marker excluded
+        dairy = next(r for r in rows if r["category"] == "Dairy")
+        assert dairy["total_spent"] == pytest.approx(5.0)
+
     def test_list_item_stars_category_path_prefix(self, db: DatabaseManager) -> None:
         fact_id, _ = _store_fact_with_items(
             db, items=[{"name": "Milk", "total_price": 1.0}]
@@ -702,6 +854,42 @@ class TestApi:
     def test_avg_price_bad_group_by(self, client: TestClient) -> None:
         resp = client.get("/api/v1/item-stars/avg-price", params={"group_by": "bogus"})
         assert resp.status_code == 400
+
+    def test_price_by_state_endpoint(
+        self, client: TestClient, db_manager: DatabaseManager
+    ) -> None:
+        _store_fact_with_items(
+            db_manager,
+            items=[
+                {
+                    "name": "Fresh salmon",
+                    "comparable_name": "salmon",
+                    "total_price": 27.0,
+                    "comparable_unit_price": 27.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "fresh"},
+                },
+                {
+                    "name": "Smoked salmon",
+                    "comparable_name": "salmon",
+                    "total_price": 58.0,
+                    "comparable_unit_price": 58.0,
+                    "comparable_unit": UnitType.KILOGRAM,
+                    "attributes": {"state": "cured"},
+                },
+            ],
+        )
+        resp = client.get("/api/v1/item-stars/price-by-state")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert {r["state"] for r in data} == {"fresh", "cured"}
+        # min_states below 2 is rejected by the query param bound.
+        assert (
+            client.get(
+                "/api/v1/item-stars/price-by-state", params={"min_states": 1}
+            ).status_code
+            == 422
+        )
 
     def test_rebuild_endpoint(
         self, client: TestClient, db_manager: DatabaseManager

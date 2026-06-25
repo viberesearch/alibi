@@ -65,6 +65,13 @@ from alibi.commands.enrich import enrich
 cli.add_command(enrich)
 
 # ---------------------------------------------------------------------------
+# Register the currency / FX group
+# ---------------------------------------------------------------------------
+from alibi.commands.fx import fx
+
+cli.add_command(fx)
+
+# ---------------------------------------------------------------------------
 # Register groups from alibi.commands.analytics
 # ---------------------------------------------------------------------------
 from alibi.commands.analytics import analytics, nutrition, predictions, report

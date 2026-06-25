@@ -43,8 +43,9 @@ def make_vendor_key(
 
     Returns None if neither registration nor name is available.
     """
-    from alibi.normalizers.vendors import normalize_vendor_slug
+    from alibi.normalizers.vendors import clean_registration, normalize_vendor_slug
 
+    registration = clean_registration(registration)
     if registration:
         return registration.strip().upper().replace(" ", "")
 

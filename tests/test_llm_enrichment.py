@@ -156,6 +156,16 @@ class TestInferBrandCategory:
         assert call_kwargs.kwargs.get("model") == "custom-model"
         assert call_kwargs.kwargs.get("ollama_url") == "http://custom:11434"
 
+    @patch("alibi.extraction.structurer.structure_ocr_text")
+    def test_constrains_decoding_with_schema(self, mock_llm):
+        # The response_format schema is what stops the local model emitting
+        # malformed JSON on garbled batches — assert it reaches the structurer.
+        from alibi.enrichment.llm_enrichment import _RESPONSE_FORMAT
+
+        mock_llm.return_value = {"items": []}
+        infer_brand_category([{"idx": 1, "name": "Test"}])
+        assert mock_llm.call_args.kwargs["response_format"] is _RESPONSE_FORMAT
+
 
 # ===========================================================================
 # TestEnrichItemsByLlm

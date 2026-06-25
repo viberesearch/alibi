@@ -76,6 +76,25 @@ async def create_user_endpoint(
     return auth.create_user(db, name=request.name)
 
 
+@router.get("/me")
+async def get_current_user_endpoint(
+    db: Annotated[DatabaseManager, Depends(get_database)],
+    user: Annotated[dict[str, Any], Depends(require_user)],
+) -> dict[str, Any]:
+    """Return the user authenticated by the ``X-API-Key``.
+
+    Used by the thin Telegram bot to validate a mnemonic on ``/link`` and to
+    answer ``/whoami`` without DB access. Declared before ``/{user_id}`` so the
+    literal ``me`` is not captured as an id.
+    """
+    found = auth.get_user(db, user["id"])
+    if not found:
+        # Single-user / default mode: require_user synthesised the user.
+        return {**user, "contacts": []}
+    contacts = auth.list_contacts(db, user["id"])
+    return {**found, "contacts": contacts}
+
+
 @router.get("/{user_id}")
 async def get_user_endpoint(
     user_id: str,

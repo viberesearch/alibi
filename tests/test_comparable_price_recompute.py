@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 
 os.environ["ALIBI_TESTING"] = "1"
 
@@ -156,6 +157,42 @@ class TestRecomputeForRow:
             }
         )
         assert changes is None
+
+    def test_price_above_ceiling_skipped(self):
+        # A normalised price above _MAX_PLAUSIBLE_UNIT_PRICE (200) is rejected:
+        # 50 EUR for a 100 ml bottle -> 500 EUR/L, which we refuse to write.
+        changes = recompute_for_row(
+            {
+                "id": "x",
+                "name": "MYSTERY OIL 100ML",
+                "quantity": 1,
+                "unit": None,
+                "unit_quantity": None,
+                "total_price": "50.00",
+                "comparable_unit": None,
+                "comparable_unit_price": None,
+            }
+        )
+        assert changes is None
+
+    def test_price_just_below_ceiling_written(self):
+        # 15 EUR for a 100 ml bottle -> 150 EUR/L, under the 200 ceiling, so it
+        # is recovered from the name and written.
+        changes = recompute_for_row(
+            {
+                "id": "x",
+                "name": "PREMIUM OIL 100ML",
+                "quantity": 1,
+                "unit": "pcs",
+                "unit_quantity": None,
+                "total_price": "15.00",
+                "comparable_unit": "pcs",
+                "comparable_unit_price": "15.00",
+            }
+        )
+        assert changes is not None
+        assert changes["comparable_unit"] == "l"
+        assert Decimal(changes["comparable_unit_price"]) == Decimal("150")
 
     def test_no_total_price_skipped(self):
         assert (

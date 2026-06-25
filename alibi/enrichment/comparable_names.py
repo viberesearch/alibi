@@ -160,6 +160,30 @@ def _clean_comparable_name(value: Any) -> str | None:
     return cleaned
 
 
+# JSON schema for Ollama constrained decoding: forces a well-formed
+# ``{"items": [{"idx", "comparable_name"}]}`` envelope so a garbled OCR batch
+# can't yield unparseable JSON (the same root-cause guard PR #59 added to the
+# product-state pass). Structural only — value cleanup stays in
+# ``_clean_comparable_name``; gated by ``config.ollama_structured_output``.
+_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "comparable_name": {"type": ["string", "null"]},
+                },
+                "required": ["idx", "comparable_name"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+
 def infer_comparable_names(
     items: list[dict[str, Any]],
     vendor_name: str = "Unknown",
@@ -197,6 +221,7 @@ def infer_comparable_names(
         ollama_url=ollama_url,
         timeout=timeout,
         label="Comparable-name enrichment",
+        response_format=_RESPONSE_FORMAT,
     )
 
     out: dict[int, str | None] = {}

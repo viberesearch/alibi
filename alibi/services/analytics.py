@@ -20,12 +20,24 @@ from alibi.analytics.patterns import SpendingInsights
 from alibi.analytics.spending import MonthlySpend, VendorSpend
 from alibi.analytics.subscriptions import SubscriptionPattern
 from alibi.analytics.vendors import VendorDeduplicationReport
+from alibi.normalizers.vendors import is_payment_intermediary
 
 if TYPE_CHECKING:
     from alibi.db.connection import DatabaseManager
 
+# EUR-normalised fact amount: amount * resolved ``eur_rate``, or the amount
+# itself for an EUR / currency-less fact. A foreign fact with no rate yet yields
+# NULL, so it drops out of SUM/AVG rather than blending currencies (mirrors
+# :func:`alibi.analytics.spending.eur_amount`). Safe in any query whose FROM
+# includes ``facts`` (qualified with the table name, not an alias).
+_EUR_AMOUNT_SQL = (
+    "(CAST(total_amount AS REAL) * COALESCE(facts.eur_rate, "
+    "CASE WHEN COALESCE(facts.currency, 'EUR') = 'EUR' THEN 1.0 END))"
+)
+
 __all__ = [
     "spending_summary",
+    "spending_overview",
     "spending_by_vendor",
     "spending_by_month",
     "spending_analysis",
@@ -180,13 +192,16 @@ def spending_analysis(
     else:
         group_expr = group_exprs[group_by]
 
+    # Normalise each fact's amount to EUR (its resolved eur_rate, or 1.0 for an
+    # EUR / currency-less fact) so the spend totals never blend currencies.
+    eur = _EUR_AMOUNT_SQL
     sql = f"""
         SELECT {group_expr} as period,
                COUNT(DISTINCT facts.id) as count,
-               SUM(CAST(total_amount AS REAL)) as total,
-               AVG(CAST(total_amount AS REAL)) as average,
-               MIN(CAST(total_amount AS REAL)) as min_amount,
-               MAX(CAST(total_amount AS REAL)) as max_amount
+               SUM({eur}) as total,
+               AVG({eur}) as average,
+               MIN({eur}) as min_amount,
+               MAX({eur}) as max_amount
         {from_clause}{where}
         GROUP BY {group_expr}
         ORDER BY period DESC
@@ -199,6 +214,68 @@ def spending_analysis(
     }
 
 
+def spending_overview(
+    db: "DatabaseManager",
+    filters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One-call summary for the web Analytics dashboard.
+
+    Aggregates EUR-normalised spend into headline stats plus category and
+    vendor breakdowns. All money is in EUR (each fact converted via its
+    resolved ``eur_rate``); facts with no rate fall back to their amount only
+    when EUR/currency-less, matching :func:`spending_analysis`.
+
+    Returns a dict with ``total_spent``, ``transaction_count``,
+    ``avg_basket_size``, ``top_currency``, ``by_category`` and ``by_vendor``.
+    """
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else 0.0
+
+    by_vendor_raw = spending_analysis(db, group_by="vendor", filters=filters)["data"]
+    by_category_raw = spending_analysis(db, group_by="category", filters=filters)[
+        "data"
+    ]
+
+    # Fact-level totals come from the vendor grouping (one row per fact group),
+    # not the category grouping (which fans out over line items).
+    total_spent = sum(_f(r.get("total")) for r in by_vendor_raw)
+    transaction_count = sum(int(r.get("count") or 0) for r in by_vendor_raw)
+    avg_basket_size = total_spent / transaction_count if transaction_count else 0.0
+
+    top_currency_row = db.fetchall("""
+        SELECT COALESCE(currency, 'EUR') AS currency, COUNT(*) AS n
+        FROM facts
+        WHERE fact_type IN ('purchase', 'subscription_payment')
+        GROUP BY COALESCE(currency, 'EUR')
+        ORDER BY n DESC
+        LIMIT 1
+        """)
+    top_currency = top_currency_row[0]["currency"] if top_currency_row else "EUR"
+
+    def _shape(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    key: r.get("period"),
+                    "total": round(_f(r.get("total")), 2),
+                    "count": int(r.get("count") or 0),
+                }
+            )
+        out.sort(key=lambda d: float(d["total"]), reverse=True)
+        return out
+
+    return {
+        "total_spent": round(total_spent, 2),
+        "transaction_count": transaction_count,
+        "avg_basket_size": round(avg_basket_size, 2),
+        "top_currency": top_currency,
+        "by_category": _shape(by_category_raw, "category"),
+        "by_vendor": _shape(by_vendor_raw, "vendor"),
+    }
+
+
 def monthly_report(
     db: "DatabaseManager",
     year: int,
@@ -206,13 +283,18 @@ def monthly_report(
 ) -> dict[str, Any]:
     """Generate a monthly spending report.
 
+    All monetary totals are EUR-normalised (each fact converted via its resolved
+    ``eur_rate``), so a month mixing currencies (RUB/CAD/TRY) is not summed as if
+    every amount were euros. ``count`` fields stay raw transaction counts.
+
     Args:
         db: Database manager.
         year: Calendar year.
         month: Calendar month (1-12).
 
     Returns:
-        Dict with period, expenses, income, top_vendors, artifacts_processed.
+        Dict with period, expenses, income, top_vendors, artifacts_processed
+        (all money in EUR).
     """
     date_from = f"{year:04d}-{month:02d}-01"
     if month == 12:
@@ -220,34 +302,40 @@ def monthly_report(
     else:
         date_to = f"{year:04d}-{month + 1:02d}-01"
 
+    # All money is EUR-normalised so multi-currency months (RUB/CAD/TRY facts)
+    # don't blend raw amounts; counts stay transaction counts.
     total_row = db.fetchone(
-        """SELECT COUNT(*) as count,
-                  SUM(CAST(total_amount AS REAL)) as total
+        f"""SELECT COUNT(*) as count,
+                  SUM({_EUR_AMOUNT_SQL}) as total
            FROM facts
            WHERE event_date >= ? AND event_date < ?
-                 AND fact_type IN ('purchase', 'subscription_payment')""",
+                 AND fact_type IN ('purchase', 'subscription_payment')""",  # noqa: S608,E501
         (date_from, date_to),
     )
 
     income_row = db.fetchone(
-        """SELECT COUNT(*) as count,
-                  SUM(CAST(total_amount AS REAL)) as total
+        f"""SELECT COUNT(*) as count,
+                  SUM({_EUR_AMOUNT_SQL}) as total
            FROM facts
            WHERE event_date >= ? AND event_date < ?
-                 AND fact_type = 'refund'""",
+                 AND fact_type = 'refund'""",  # noqa: S608
         (date_from, date_to),
     )
 
-    vendor_rows = db.fetchall(
-        """SELECT vendor, COUNT(*) as count,
-                  SUM(CAST(total_amount AS REAL)) as total
+    all_vendor_rows = db.fetchall(
+        f"""SELECT vendor, COUNT(*) as count,
+                  SUM({_EUR_AMOUNT_SQL}) as total
            FROM facts
            WHERE event_date >= ? AND event_date < ?
                  AND fact_type IN ('purchase', 'subscription_payment')
                  AND vendor IS NOT NULL
-           GROUP BY vendor ORDER BY total DESC LIMIT 10""",
+           GROUP BY vendor ORDER BY total DESC""",  # noqa: S608
         (date_from, date_to),
     )
+    # Drop card acquirers / ATM withdrawals -- they are not merchant spend.
+    vendor_rows = [
+        r for r in all_vendor_rows if not is_payment_intermediary(r["vendor"])
+    ][:10]
 
     doc_row = db.fetchone(
         """SELECT COUNT(*) as count
