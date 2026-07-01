@@ -19,6 +19,8 @@ Once running, alibi exposes these interfaces (all thin clients over the same RES
 
 Host/port are configurable via `ALIBI_API_HOST` (default `127.0.0.1`) and `ALIBI_API_PORT` (default `3100`) — see [.env.example](.env.example). The Telegram container reaches the host API at `host.docker.internal:3100` (`ALIBI_API_URL`).
 
+> For a persistent deployment, run the API and Datasette as launchd agents (macOS) or systemd units (Linux) and the bot as its container, so they survive logout and restart on boot.
+
 ## Why alibi?
 
 Receipt scanners extract vendor + total. Expense trackers require manual data entry. Cloud APIs charge per scan and see all your data.
