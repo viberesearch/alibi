@@ -41,11 +41,15 @@ class Config(BaseSettings):
     ollama_model: str = Field(default="qwen3-vl:30b")
     ollama_ocr_model: str = Field(default="glm-ocr")
     ollama_ocr_fallback_model: Optional[str] = Field(default=None)
-    # Structuring model (Stage 3, OCR text -> schema JSON). gemma4:12b beat
-    # qwen3.5:9b on a 11-receipt accuracy benchmark: verify 0.87 vs 0.76
-    # (never lost per-image), fill 0.85 vs 0.77. Slower but accuracy-first.
-    # Routes via /api/chat with think=false + format schema (see structurer).
-    ollama_structure_model: str = Field(default="gemma4:12b")
+    # Structuring model (Stage 3, OCR text -> schema JSON). gemma4:12b-mlx
+    # (MLX/MTP engine, Ollama 0.31+) replaced plain gemma4:12b after a 6-receipt
+    # production-path A/B: better quality (verify 0.925 vs 0.848, fill 0.883 vs
+    # 0.85; json_ok + items tied) AND ~44% faster (13.6s vs 24.2s/doc). MTP draft
+    # tokens raise eval_count (754 vs 470) but wall-clock still wins. Text-only,
+    # which is correct here: Stage 3 is text->JSON; vision stays on qwen3-vl:30b.
+    # History: gemma4:12b had beaten qwen3.5:9b (verify 0.87 vs 0.76, fill 0.85
+    # vs 0.77). Routes via /api/chat with think=false + format schema.
+    ollama_structure_model: str = Field(default="gemma4:12b-mlx")
     ollama_keep_alive: int = Field(default=300)  # seconds; 0 = unload immediately
     ollama_num_predict: int = Field(
         default=4096
