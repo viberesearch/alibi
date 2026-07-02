@@ -216,7 +216,10 @@ class TestEnrichmentScheduler:
             )
             result = scheduler.run_now()
             assert isinstance(result, EnrichmentCycleResult)
-            assert len(result.phases) == 5
+            # 5 core phases + fx_backfill + categorize backstops
+            assert len(result.phases) == 7
+            phase_names = {p.name for p in result.phases}
+            assert {"fx_backfill", "categorize"} <= phase_names
             assert result.duration_seconds >= 0
             assert scheduler.state.cycle_count == 1
         finally:
@@ -404,8 +407,8 @@ class TestEnrichmentScheduler:
             # First phase errored but others still ran
             assert result.phases[0].error is not None
             assert result.phases[0].name == "barcode_cascade"
-            # Subsequent phases still executed
-            assert len(result.phases) == 5
+            # Subsequent phases still executed (5 core + 2 backstops)
+            assert len(result.phases) == 7
             assert result.phases[1].error is None
         finally:
             sched._STATE_FILE = original_file
@@ -451,3 +454,81 @@ class TestEnrichmentSchedulerWithData:
             assert phase.error is None
         finally:
             sched._STATE_FILE = original_file
+
+
+# ---------------------------------------------------------------------------
+# TestSingletonLock — only one scheduler may run machine-wide
+# ---------------------------------------------------------------------------
+
+
+class TestSingletonLock:
+    def test_second_instance_cannot_start_while_first_holds_lock(
+        self, db: MagicMock, tmp_path: Path
+    ) -> None:
+        import alibi.daemon.scheduler as sched
+
+        original_file = sched._STATE_FILE
+        try:
+            # Lock path derives from _STATE_FILE.parent, so isolate it to tmp.
+            sched._STATE_FILE = tmp_path / "state.json"
+            a = EnrichmentScheduler(db_factory=lambda: db)
+            b = EnrichmentScheduler(db_factory=lambda: db)
+            a.start()
+            assert a.is_running is True
+            b.start()
+            assert b.is_running is False  # a holds the flock
+            a.stop()
+            # Lock released — b can now take over.
+            b.start()
+            assert b.is_running is True
+            b.stop()
+        finally:
+            sched._STATE_FILE = original_file
+
+
+# ---------------------------------------------------------------------------
+# TestApiLifespan — the scheduler runs inside the API process
+# ---------------------------------------------------------------------------
+
+
+class TestApiLifespan:
+    def test_disabled_by_default_is_clean_noop(self) -> None:
+        import asyncio
+
+        from alibi.api.app import _lifespan
+
+        async def run() -> None:
+            async with _lifespan(None):  # type: ignore[arg-type]
+                pass
+
+        # Default config has enrichment_schedule_enabled=False → no thread.
+        asyncio.run(run())
+
+    def test_starts_and_stops_scheduler_when_enabled(self) -> None:
+        import asyncio
+
+        from alibi.config import Config
+
+        cfg = Config(_env_file=None, enrichment_schedule_enabled=True)
+        fake_sched = MagicMock()
+        fake_sched.is_running = True
+
+        with (
+            patch("alibi.config.get_config", return_value=cfg),
+            patch(
+                "alibi.daemon.scheduler.EnrichmentScheduler", return_value=fake_sched
+            ) as sched_cls,
+            patch("alibi.db.connection.DatabaseManager") as db_cls,
+        ):
+            db_cls.return_value.is_initialized.return_value = True
+            from alibi.api.app import _lifespan
+
+            async def run() -> None:
+                async with _lifespan(None):  # type: ignore[arg-type]
+                    pass
+
+            asyncio.run(run())
+
+        sched_cls.assert_called_once()
+        fake_sched.start.assert_called_once()
+        fake_sched.stop.assert_called_once()

@@ -216,6 +216,40 @@ class TestEnrichPending:
         assert {r.item_id for r in results} == {"todo"}
 
     @patch("alibi.extraction.structurer.structure_ocr_text")
+    def test_document_id_scopes_to_one_document(self, mock_llm, db):
+        """The ingestion finalizer scopes categorisation to the new document so
+        an upload does not drag in the whole global backlog."""
+        mock_llm.return_value = {
+            "items": [{"idx": 1, "category_path": "food > dairy > milk"}]
+        }
+
+        def _link_bundle(item_id: str) -> None:
+            # _seed_fact_item omits the bundle chain the document_id filter walks.
+            conn = db.get_connection()
+            conn.execute(
+                "INSERT OR IGNORE INTO bundles (id, document_id, bundle_type, "
+                "cloud_id) VALUES (?, ?, 'basket', ?)",
+                (f"bundle-{item_id}", f"doc-{item_id}", f"cloud-{item_id}"),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO cloud_bundles "
+                "(cloud_id, bundle_id, match_type) VALUES (?, ?, 'manual')",
+                (f"cloud-{item_id}", f"bundle-{item_id}"),
+            )
+            conn.commit()
+
+        _seed_fact_item(db, "mine", "MILK")
+        _seed_fact_item(db, "other", "MILK")
+        _link_bundle("mine")
+        _link_bundle("other")
+
+        results = enrich_pending_categories(db, document_id="doc-mine")
+        # Only the target document's item is categorised; the backlog is untouched.
+        assert {r.item_id for r in results} == {"mine"}
+        row = db.fetchone("SELECT category_path FROM fact_items WHERE id = 'other'")
+        assert row["category_path"] is None
+
+    @patch("alibi.extraction.structurer.structure_ocr_text")
     def test_idempotent_rerun_is_noop(self, mock_llm, db):
         mock_llm.return_value = {
             "items": [{"idx": 1, "category_path": "food > dairy > milk"}]

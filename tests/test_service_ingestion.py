@@ -138,6 +138,25 @@ class TestProcessBatch:
         instance.process_batch.assert_called_once_with([], folder_contexts=None)
         assert result == []
 
+    def test_emits_events_per_result(self, tmp_path):
+        """Batch-ingested docs must be visible to event subscribers,
+        exactly like process_file/process_document_group ingests."""
+        files = [tmp_path / f"doc{i}.jpg" for i in range(2)]
+        for f in files:
+            f.write_bytes(b"fake")
+        results = [_make_result(f) for f in files]
+
+        with (
+            patch(PIPELINE_TARGET) as MockPipeline,
+            patch.object(ingestion, "_finalize_ingestion"),
+            patch.object(ingestion, "_emit_ingestion_events") as emit,
+        ):
+            MockPipeline.return_value.process_batch.return_value = results
+            ingestion.process_batch(MagicMock(), files)
+
+        assert emit.call_count == 2
+        assert [c.args[0] for c in emit.call_args_list] == results
+
 
 # ---------------------------------------------------------------------------
 # process_document_group
@@ -308,3 +327,95 @@ class TestProcessBytes:
         path = call_args.args[0]
         assert path.name.startswith("api_")
         path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# _finalize_ingestion
+# ---------------------------------------------------------------------------
+
+
+class TestFinalizeIngestion:
+    """The post-fact finalizer that makes an upload analytics-ready in-process
+    (the API server runs no event subscribers, so this cannot be deferred)."""
+
+    def _good(self) -> ProcessingResult:
+        return ProcessingResult(
+            success=True, file_path=Path("/tmp/r.jpg"), document_id="doc-1"
+        )
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            ProcessingResult(success=False, file_path=Path("/tmp/r.jpg")),
+            ProcessingResult(
+                success=True,
+                file_path=Path("/tmp/r.jpg"),
+                is_duplicate=True,
+                document_id="doc-1",
+            ),
+            ProcessingResult(success=True, file_path=Path("/tmp/r.jpg")),  # no doc id
+        ],
+    )
+    def test_skips_when_nothing_to_finalize(self, result):
+        with patch("alibi.db.v2_store.get_facts_for_document") as gf:
+            ingestion._finalize_ingestion(MagicMock(), result)
+        gf.assert_not_called()
+
+    def test_runs_all_steps_for_new_fact(self):
+        db = MagicMock()
+        with (
+            patch(
+                "alibi.db.v2_store.get_facts_for_document",
+                return_value=[{"id": "fact-1"}],
+            ),
+            patch("alibi.services.reconcile.reconcile_fact") as reconcile,
+            patch("alibi.services.fx.stamp_fact_rate") as stamp,
+            patch(
+                "alibi.enrichment.categorize.enrich_pending_categories"
+            ) as categorize,
+            patch(
+                "alibi.services.dedup.deduplicate_facts",
+                return_value=MagicMock(resolved=[], review=[]),
+            ) as dedup,
+            patch(
+                "alibi.services.item_stars.refresh_item_stars_for_document"
+            ) as refresh,
+        ):
+            ingestion._finalize_ingestion(db, self._good())
+
+        reconcile.assert_called_once_with(db, "fact-1", apply=True)
+        stamp.assert_called_once_with(db, "fact-1")
+        categorize.assert_called_once_with(db, document_id="doc-1")
+        dedup.assert_called_once_with(db, apply=False)
+        refresh.assert_called_once_with(db, "doc-1")
+
+    def test_one_step_failing_does_not_block_the_rest(self):
+        db = MagicMock()
+        with (
+            patch(
+                "alibi.db.v2_store.get_facts_for_document",
+                return_value=[{"id": "fact-1"}],
+            ),
+            patch(
+                "alibi.services.reconcile.reconcile_fact",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("alibi.services.fx.stamp_fact_rate") as stamp,
+            patch(
+                "alibi.enrichment.categorize.enrich_pending_categories"
+            ) as categorize,
+            patch(
+                "alibi.services.dedup.deduplicate_facts",
+                return_value=MagicMock(resolved=[], review=[]),
+            ),
+            patch(
+                "alibi.services.item_stars.refresh_item_stars_for_document"
+            ) as refresh,
+        ):
+            # Must not raise despite the reconcile step blowing up.
+            ingestion._finalize_ingestion(db, self._good())
+
+        # Downstream steps still ran.
+        stamp.assert_called_once()
+        categorize.assert_called_once()
+        refresh.assert_called_once()

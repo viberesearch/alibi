@@ -64,6 +64,13 @@ disable_error_code = ["call-arg"]
 module = ["alibi.extraction.gemini_verifier", "alibi.enrichment.product_matcher"]
 warn_return_any = false
 
+# Optional/untyped third-party deps with no stubs on PyPI. The pre-commit
+# hook passes --ignore-missing-imports globally; this keeps a bare
+# `mypy alibi/` green too.
+[[tool.mypy.overrides]]
+module = ["pdf2image", "pyzbar.*", "lancedb", "pyarrow", "doctr", "doctr.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py312"
 line-length = 88

@@ -113,6 +113,12 @@ def parse_date(value: Any) -> date | None:
     return None
 
 
+# Day-first or month-first numeric date (03/05/2026, 3.5.26, 03-05-2026),
+# optionally followed by a time. Year-first (ISO) and month-name formats do
+# NOT match — those are unambiguous.
+_AMBIGUOUS_NUMERIC_DATE = re.compile(r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}(?:\s.*)?$")
+
+
 def disambiguate_date(
     parsed: date,
     raw_value: str,
@@ -143,6 +149,13 @@ def disambiguate_date(
     # Only attempt disambiguation for ambiguous dates where both
     # day and month are <= 12 (otherwise the parse is unambiguous).
     if parsed.day > 12 or parsed.month > 12:
+        return parsed
+
+    # The raw string itself must be an ambiguous numeric D/M/Y pattern.
+    # ISO (year-first) and month-name formats state the month explicitly, so
+    # swapping them would corrupt a correct date (e.g. a human-fixed
+    # "2026-03-05" in a cached YAML must never become May 3).
+    if not _AMBIGUOUS_NUMERIC_DATE.match(str(raw_value).strip()):
         return parsed
 
     # Build the swapped interpretation (DD/MM <-> MM/DD).

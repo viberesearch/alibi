@@ -943,3 +943,42 @@ class TestGetPrimaryFactIdForDocument:
 
     def test_none_for_unknown_document(self, db):
         assert query.get_primary_fact_id_for_document(db, "no-such-doc") is None
+
+
+# ---------------------------------------------------------------------------
+# delete_fact / delete_document
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteFact:
+    def test_delete_fact_keeps_cloud_while_bundles_reference_it(self, db):
+        """delete_fact before delete_document must not hit the
+        bundles.cloud_id FK: the cloud stays until fully orphaned."""
+        doc = _make_doc(db)
+        atom = _make_vendor_atom(db, doc)
+        bundle = _make_bundle(db, doc, [atom])
+        fact = _make_cloud_and_collapse(db, bundle)
+
+        assert query.delete_fact(db, fact.id) is True
+        assert db.fetchone("SELECT id FROM facts WHERE id = ?", (fact.id,)) is None
+        # Cloud survives — the bundle still points at it
+        assert (
+            db.fetchone("SELECT id FROM clouds WHERE id = ?", (fact.cloud_id,))
+            is not None
+        )
+
+    def test_delete_fact_after_document_removes_orphaned_cloud(self, db):
+        """Document-first order (the dedup path) fully cleans the cloud."""
+        doc = _make_doc(db)
+        atom = _make_vendor_atom(db, doc)
+        bundle = _make_bundle(db, doc, [atom])
+        fact = _make_cloud_and_collapse(db, bundle)
+
+        assert query.delete_document(db, doc.id) is True
+        assert query.delete_fact(db, fact.id) is True
+        assert (
+            db.fetchone("SELECT id FROM clouds WHERE id = ?", (fact.cloud_id,)) is None
+        )
+
+    def test_delete_fact_missing_returns_false(self, db):
+        assert query.delete_fact(db, "no-such-fact") is False

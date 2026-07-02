@@ -97,6 +97,14 @@ class TestDatabaseManager:
         assert row is not None
         assert row[0] == 1
 
+    def test_busy_timeout_set(self, db_manager: DatabaseManager) -> None:
+        """A busy timeout is configured so contended writers wait instead of
+        failing instantly (API request singleton vs. in-process scheduler)."""
+        db_manager.initialize()
+        row = db_manager.fetchone("PRAGMA busy_timeout")
+        assert row is not None
+        assert row[0] == 5000
+
     def test_get_stats_returns_seeded_counts(self, db_manager: DatabaseManager) -> None:
         """Test that get_stats returns seeded counts after initialization."""
         db_manager.initialize()

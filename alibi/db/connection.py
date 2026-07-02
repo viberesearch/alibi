@@ -90,6 +90,12 @@ class DatabaseManager:
             # Enable foreign keys and WAL mode for concurrent reads
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.execute("PRAGMA journal_mode = WAL")
+            # Wait (don't fail instantly) when another connection holds the write
+            # lock. WAL lets readers and a writer coexist, but two writers still
+            # serialize -- e.g. the API request singleton and the in-process
+            # enrichment scheduler's own connection. Without a busy timeout the
+            # loser raises "database is locked" immediately; 5s lets it wait.
+            self._connection.execute("PRAGMA busy_timeout = 5000")
             # Use Row factory for dict-like access
             self._connection.row_factory = sqlite3.Row
             # Bring an existing-but-stale database up to head on first open, so a

@@ -525,17 +525,25 @@ class ProcessingPipeline:
         date doesn't appear in the raw text but other dates do, use the
         most recent raw text date instead.
 
-        Also applies a sanity range: reject dates more than 2 years in
-        the past or future.
+        Also applies a sanity range: reject dates more than 2 years in the
+        past, or in the future beyond a small clock-skew tolerance. A receipt
+        is issued in the past, so a future ``event_date`` (e.g. an OCR year
+        misread like 2028) is never plausible even when it falls inside the
+        two-year window -- and it breaks the historical FX lookup, which has no
+        rate for a date that has not happened yet.
         """
         if parsed_date is None:
             return None
 
         today = date.today()
         max_age_days = 365 * 2
+        # Allow a couple of days ahead for time-zone / clock skew only.
+        future_skew_days = 2
 
-        # Sanity check: date within reasonable range?
-        date_sane = abs((today - parsed_date).days) <= max_age_days
+        # Sanity check: not absurdly old, and not in the future.
+        date_sane = (today - parsed_date).days <= max_age_days and (
+            parsed_date - today
+        ).days <= future_skew_days
 
         if not raw_text:
             return parsed_date if date_sane else None
@@ -544,13 +552,31 @@ class ProcessingPipeline:
         if not raw_dates:
             return parsed_date if date_sane else None
 
-        # If the LLM date matches one found in raw text, trust it
-        if parsed_date in raw_dates:
+        # If the LLM date matches one found in raw text, trust it -- but only
+        # when it is itself plausible. A future/ancient date the OCR also
+        # misread (so it appears in raw_text too) must not be rubber-stamped.
+        # An ambiguous numeric raw date (day and month both <= 12) also
+        # matches its day/month swap: disambiguation may legitimately have
+        # chosen the MM/DD reading, and validation must not undo it. The
+        # swaps stay out of valid_raw below, so corrections still only pick
+        # dates literally printed in DMY form.
+        accepted = set(raw_dates)
+        for d in raw_dates:
+            if d.day <= 12 and d.month <= 12:
+                try:
+                    accepted.add(date(d.year, d.day, d.month))
+                except ValueError:
+                    pass
+        if parsed_date in accepted and date_sane:
             return parsed_date
 
         # LLM date not in raw text — pick the most plausible raw text date
-        # (most recent date within sanity range)
-        valid_raw = [d for d in raw_dates if abs((today - d).days) <= max_age_days]
+        # (most recent date within sanity range, excluding future dates)
+        valid_raw = [
+            d
+            for d in raw_dates
+            if (today - d).days <= max_age_days and (d - today).days <= future_skew_days
+        ]
         if valid_raw:
             # Prefer the most recent date (likely the transaction date)
             best = max(valid_raw)
@@ -695,12 +721,16 @@ class ProcessingPipeline:
                 extracted_data["line_items"] = cleaned
 
     @staticmethod
-    def _disambiguate_date(extracted_data: dict[str, Any], file_path: Path) -> None:
+    def _disambiguate_date(
+        extracted_data: dict[str, Any], file_path: Path | None
+    ) -> None:
         """Resolve ambiguous DD/MM vs MM/DD dates using file metadata.
 
         Uses file modification date as a proximity reference.  A document
         photographed/uploaded in March with a date reading "03/05/2026"
         is more likely March 5 than May 3 (two months in the future).
+        Only acts on genuinely ambiguous numeric raw dates -- ISO and
+        month-name formats pass through untouched (see disambiguate_date).
         """
         raw_date = extracted_data.get("date")
         if not raw_date:
@@ -712,13 +742,16 @@ class ProcessingPipeline:
         if not parsed:
             return
 
-        # Get file modification date as reference
+        # Get file modification date as reference (the file may no longer
+        # exist for cached-YAML re-ingests; proximity rules then fall back
+        # to the reference date).
         file_date = None
-        try:
-            stat = file_path.stat()
-            file_date = date.fromtimestamp(stat.st_mtime)
-        except (OSError, ValueError):
-            pass
+        if file_path is not None:
+            try:
+                stat = file_path.stat()
+                file_date = date.fromtimestamp(stat.st_mtime)
+            except (OSError, ValueError):
+                pass
 
         fixed = disambiguate_date(
             parsed,
@@ -736,9 +769,69 @@ class ProcessingPipeline:
             )
             extracted_data["date"] = fixed.isoformat()
 
-    def _strip_pipeline_meta(self, extracted_data: dict[str, Any]) -> _ExtractionMeta:
-        """Pop pipeline metadata from extraction and run verification."""
+    def _validate_extracted_date(
+        self, extracted_data: dict[str, Any], ocr_text: str | None
+    ) -> None:
+        """Sanity-check the extracted transaction date in place.
+
+        Runs in every extraction path (via ``_strip_pipeline_meta``). Parses
+        the date and passes it through ``_validate_date``, which cross-checks
+        the raw OCR text and a +/-2yr range. Either it corrects an off-base
+        date from the raw text, or -- when the date is implausible and
+        uncorrectable (typically an OCR year misread like 2028) -- it flags the
+        document for review so a corrupt ``event_date`` never lands silently in
+        analytics (and never breaks the historical FX lookup).
+
+        A *missing* date is flagged too: a dateless fact silently drops out of
+        both the date-based and the EUR analytics, so it must surface for
+        review rather than vanish. We deliberately do not guess from the file's
+        mtime -- that is the upload time, not the transaction date, and a
+        plausible-but-wrong date is worse than a flagged gap.
+        """
+        raw = extracted_data.get("date")
+        if not raw:
+            logger.warning("No transaction date extracted; flagging for review")
+            extracted_data["_date_missing"] = True
+            extracted_data["_cv_needs_review"] = True
+            return
+        from alibi.normalizers.dates import parse_date
+
+        parsed = parse_date(raw)
+        if parsed is None:
+            logger.warning("Unparseable transaction date %r; flagging for review", raw)
+            extracted_data["_date_unparseable"] = str(raw)
+            extracted_data["_cv_needs_review"] = True
+            return
+        validated = self._validate_date(parsed, ocr_text)
+        if validated is None:
+            logger.warning(
+                "Implausible date %s (outside +/-2yr, no raw-text match); "
+                "flagging document for review",
+                parsed.isoformat(),
+            )
+            extracted_data["_date_out_of_range"] = parsed.isoformat()
+            extracted_data["_cv_needs_review"] = True
+        elif validated != parsed:
+            logger.info(
+                "Date corrected from raw text: %s -> %s",
+                parsed.isoformat(),
+                validated.isoformat(),
+            )
+            extracted_data["date"] = validated.isoformat()
+
+    def _strip_pipeline_meta(
+        self, extracted_data: dict[str, Any], file_path: Path | None = None
+    ) -> _ExtractionMeta:
+        """Pop pipeline metadata from extraction and run verification.
+
+        This is the shared chokepoint every extraction path funnels through
+        (fresh extraction, the cached-YAML branches, and document groups), so
+        date disambiguation + validation both live here rather than in any
+        one path.
+        """
         ocr_text = extracted_data.get("raw_text")
+        self._disambiguate_date(extracted_data, file_path)
+        self._validate_extracted_date(extracted_data, ocr_text)
         confidence = extracted_data.pop("_two_stage_confidence", None)
         pipeline_type = extracted_data.pop("_pipeline", "two_stage")
         p_confidence = extracted_data.pop("_parser_confidence", None)
@@ -832,9 +925,6 @@ class ProcessingPipeline:
 
         _swap_processor_vendor(extracted_data)
 
-        # 2b. Disambiguate date using file metadata and context
-        self._disambiguate_date(extracted_data, file_path)
-
         # 2.5. Item verification (Layer 1 + optional Layer 2)
         if extracted_data.get("line_items"):
             from alibi.extraction.item_verifier import verify_items, verify_items_llm
@@ -846,7 +936,8 @@ class ProcessingPipeline:
                     verify_items_llm(extracted_data, iv_result.flags, ocr_text)
 
         # 3. Verify extraction + extract pipeline metadata
-        meta = self._strip_pipeline_meta(extracted_data)
+        # (includes date disambiguation + validation at the shared chokepoint)
+        meta = self._strip_pipeline_meta(extracted_data, file_path)
 
         # 4. Write .alibi.yaml cache
         user_id = (folder_context.user_id if folder_context else None) or "system"
@@ -1088,7 +1179,7 @@ class ProcessingPipeline:
             self._fill_vendor_gaps(extracted_data, folder_context)
             self._fill_locale_gaps(extracted_data, folder_context)
             if extracted_data:
-                self._strip_pipeline_meta(extracted_data)
+                self._strip_pipeline_meta(extracted_data, file_path)
 
         return self._ingest_from_yaml(
             db,
@@ -1204,7 +1295,7 @@ class ProcessingPipeline:
                 self._fill_vendor_gaps(extracted_data, folder_context)
                 self._fill_locale_gaps(extracted_data, folder_context)
                 if extracted_data:
-                    self._strip_pipeline_meta(extracted_data)
+                    self._strip_pipeline_meta(extracted_data, file_path)
                 # Resolve yaml_path for the cached document
                 if _found_yaml is not None:
                     _yaml_path = str(_found_yaml)
@@ -1873,7 +1964,7 @@ class ProcessingPipeline:
                 self._fill_vendor_gaps(extracted_data, folder_context)
                 self._fill_locale_gaps(extracted_data, folder_context)
                 if extracted_data:
-                    self._strip_pipeline_meta(extracted_data)
+                    self._strip_pipeline_meta(extracted_data, folder_path)
                 # Resolve yaml_path for the cached document group
                 if _found_grp_yaml is not None:
                     _grp_yaml_path = str(_found_grp_yaml)

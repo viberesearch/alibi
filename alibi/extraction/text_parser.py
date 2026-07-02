@@ -336,6 +336,8 @@ _TAX_ID_PATTERNS = [
     re.compile(r"T\.?\s*T\.?\s*C\.?\s*N[Oo]\.?\s*:?\s*([\w-]{5,})", re.IGNORECASE),
     # Generic TIN (Tax Identification Number)
     re.compile(r"T\.?I\.?N\.?\s*:?\s*([\w-]{5,})", re.IGNORECASE),
+    # Generic "Tax ID" spelled out (e.g. Cyprus restaurant slips: "Tax ID 10379360B")
+    re.compile(r"Tax\s*ID\.?\s*(?:No\.?|Number)?\s*:?\s*([\w-]{5,})", re.IGNORECASE),
     # DE: Steuernummer (tax number, distinct from USt-IdNr VAT)
     re.compile(r"Steuernummer\s*:?\s*([\w/-]{5,})", re.IGNORECASE),
     # RU: ИНН (taxpayer identification number)
@@ -829,6 +831,36 @@ def _is_address_pollution(line: str) -> bool:
     if re.search(r"\breg\b", low, re.IGNORECASE):
         return True
     return False
+
+
+# Street/locality words that mark a line as a plausible address even
+# without a house number (multi-language, matching the supported corpora).
+_ADDRESS_KEYWORDS = re.compile(
+    r"\b(street|str|st|ave|avenue|road|rd|lane|blvd|boulevard|drive|dr"
+    r"|platz|weg|allee"
+    r"|οδος|οδός|λεωφ|λεωφορος|λεωφόρος"
+    r"|ул|улица|просп|проспект|пер|переулок"
+    r"|sok|sokak|cad|caddesi|mah|mahallesi)\b\.?",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_address(line: str) -> bool:
+    """Check that a header line plausibly IS an address before capturing it.
+
+    The pollution denylist cannot enumerate every slogan or brand tagline
+    ("Rolls'n' Bowls", "HUNGRY"), so require a positive signal instead: a
+    digit (house/street number, postcode), a comma-separated locality, or a
+    street keyword. A missing address is better than slogan junk.
+    """
+    stripped = line.strip()
+    if any(ch.isdigit() for ch in stripped):
+        return True
+    if "," in stripped:
+        return True
+    if "straße" in stripped.lower() or "strasse" in stripped.lower():
+        return True
+    return bool(_ADDRESS_KEYWORDS.search(stripped))
 
 
 # ---------------------------------------------------------------------------
@@ -1469,7 +1501,11 @@ def _extract_header(
             # Line immediately after vendor with legal suffix → legal name
             legal_name = stripped
             data["vendor_legal_name"] = legal_name
-        elif len(address_parts) < 2 and not _is_address_pollution(stripped):
+        elif (
+            len(address_parts) < 2
+            and not _is_address_pollution(stripped)
+            and _looks_like_address(stripped)
+        ):
             address_parts.append(stripped)
 
     if address_parts:

@@ -107,6 +107,10 @@ Receipts are recorded in their own currency. Summing them directly would treat
    `comparable_unit_price_eur` = the item's amount × the fact's `eur_rate`.
 3. Every spend/price aggregation reads the `_eur` columns.
 
+New facts are stamped at ingestion (the finalization stage stamps `eur_rate` per
+fact — EUR instantly, foreign at its historical rate), so `lt fx backfill` is now
+a corpus-wide backstop/repair rather than a required step after every upload.
+
 A foreign row not yet converted (NULL `_eur`) drops out of the EUR-only
 aggregations — it is never summed back in at face value. `lt fx rates` shows the
 cached rates.

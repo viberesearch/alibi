@@ -344,6 +344,7 @@ def enrich_pending_categories(
     limit: int = 200,
     model: str | None = None,
     ollama_url: str | None = None,
+    document_id: str | None = None,
 ) -> list[CategoryResult]:
     """Find and categorise fact_items lacking a ``category_path``.
 
@@ -362,21 +363,37 @@ def enrich_pending_categories(
         limit: Max items to process in this run.
         model: Ollama model override.
         ollama_url: Ollama URL override.
+        document_id: When given, restrict to the items of that one document
+            (used by the ingestion finalizer so a fresh upload is categorised
+            without dragging in the global backlog).
 
     Returns:
         A CategoryResult per processed item.
     """
+    params: list[Any] = [taxonomy.TAXONOMY_VERSION]
+    doc_join = ""
+    doc_filter = ""
+    if document_id:
+        doc_join = (
+            "JOIN cloud_bundles cb ON cb.cloud_id = f.cloud_id "
+            "JOIN bundles b ON b.id = cb.bundle_id "
+        )
+        doc_filter = "AND b.document_id = ? "
+        params.append(document_id)
+    params.append(limit)
     rows = db.fetchall(
-        "SELECT fi.id, fi.name, fi.name_normalized, fi.comparable_name, "
+        "SELECT DISTINCT fi.id, fi.name, fi.name_normalized, fi.comparable_name, "
         "       fi.brand, f.vendor "
         "FROM fact_items fi "
         "JOIN facts f ON fi.fact_id = f.id "
+        f"{doc_join}"
         "WHERE (fi.category_path IS NULL OR fi.category_path = '') "
         "AND (fi.category_taxonomy_version IS NULL "
         "     OR fi.category_taxonomy_version < ?) "
         "AND fi.name IS NOT NULL AND fi.name != '' "
+        f"{doc_filter}"
         "LIMIT ?",
-        (taxonomy.TAXONOMY_VERSION, limit),
+        tuple(params),
     )
     # Deterministic high-signal items first, then the LLM on the remainder.
     keyword_results, remaining = apply_keyword_categories(db, rows)

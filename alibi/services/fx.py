@@ -169,6 +169,35 @@ def get_eur_per_unit(
     return rate
 
 
+def stamp_fact_rate(
+    db: "DatabaseManager", fact_id: str, *, fetch: bool = True
+) -> float | None:
+    """Resolve and stamp one fact's ``eur_rate`` at its own currency/date.
+
+    Called by the ingestion finalizer so a freshly-created fact is
+    EUR-convertible immediately, instead of waiting for a global
+    ``backfill_fact_rates`` sweep (which, in the API-only deployment, nothing
+    runs automatically). An EUR / currency-less fact gets ``1.0`` with no
+    network call; a foreign fact resolves its historical rate (cache, then
+    optional fetch) and is left NULL only if unresolved. Returns the stamped
+    rate, or ``None`` if it could not be resolved (rate left unchanged).
+    """
+    row = db.fetchone("SELECT currency, event_date FROM facts WHERE id = ?", (fact_id,))
+    if row is None:
+        return None
+    currency = row["currency"]
+    date_str = str(row["event_date"]) if row["event_date"] else None
+    rate = get_eur_per_unit(db, currency, date_str, fetch=fetch)
+    if rate is None:
+        return None
+    with db.transaction() as txn:
+        txn.execute(
+            "UPDATE facts SET eur_rate = ? WHERE id = ?",
+            (rate, fact_id),
+        )
+    return rate
+
+
 def backfill_fact_rates(db: "DatabaseManager", *, fetch: bool = True) -> dict[str, Any]:
     """Stamp ``facts.eur_rate`` for every fact, fetching rates as needed.
 

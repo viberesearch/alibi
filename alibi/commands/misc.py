@@ -1625,6 +1625,16 @@ def serve(host: str, port: int, reload: bool) -> None:
     console.print(f"  Health:   http://{host}:{port}/health")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
+    # uvicorn only configures its own loggers, so alibi.* INFO (scheduler
+    # start/cycles, ingestion finalizer steps) would otherwise vanish from
+    # the server/launchd logs.
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     uvicorn.run(
         "alibi.api.app:app",
         host=host,

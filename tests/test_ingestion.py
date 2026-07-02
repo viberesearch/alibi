@@ -707,3 +707,42 @@ class TestDisambiguateDate:
         )
         # Jan 3 is 58 days from file, March 1 is 1 day -> March 1
         assert result == date(2026, 3, 1)
+
+    def test_iso_raw_date_never_swapped(self) -> None:
+        from alibi.normalizers.dates import disambiguate_date
+
+        # ISO states the month explicitly — proximity signals must not
+        # flip a correct (e.g. human-edited YAML) date.
+        parsed = date(2026, 1, 3)  # Jan 3, explicit
+        result = disambiguate_date(
+            parsed,
+            "2026-01-03",
+            file_date=date(2026, 3, 2),  # closer to the March 1 swap
+            reference_date=date(2026, 4, 1),
+        )
+        assert result == date(2026, 1, 3)
+
+    def test_month_name_raw_date_never_swapped(self) -> None:
+        from alibi.normalizers.dates import disambiguate_date
+
+        parsed = date(2026, 1, 3)
+        result = disambiguate_date(
+            parsed,
+            "3 January 2026",
+            file_date=date(2026, 3, 2),
+            reference_date=date(2026, 4, 1),
+        )
+        assert result == date(2026, 1, 3)
+
+    def test_numeric_date_with_time_suffix_still_ambiguous(self) -> None:
+        from alibi.normalizers.dates import disambiguate_date
+
+        # A trailing time must not defeat the ambiguity check
+        parsed = date(2026, 1, 3)
+        result = disambiguate_date(
+            parsed,
+            "03/01/2026 12:38:37",
+            file_date=date(2026, 3, 2),
+            reference_date=date(2026, 4, 1),
+        )
+        assert result == date(2026, 3, 1)

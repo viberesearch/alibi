@@ -233,6 +233,15 @@ class TestExtractHeader:
         _extract_header(lines, data, gaps)
         assert "vendor_vat" not in data
 
+    def test_spelled_out_tax_id(self):
+        """'Tax ID <num>' (Cyprus restaurant slips) sets vendor_tax_id so a
+        VAT-less receipt still yields a stable vendor_key."""
+        lines = ["EAST 101 LTD", "Tax ID 10379360B", "Limassol"]
+        data: dict = {}
+        gaps: list = []
+        _extract_header(lines, data, gaps)
+        assert data["vendor_tax_id"] == "10379360B"
+
     def test_payment_slip_skips_jcc(self):
         lines = PAYMENT_SLIP_OCR.split("\n")
         data: dict = {}
@@ -2648,6 +2657,27 @@ class TestSession64Improvements:
         addr = result.data.get("vendor_address", "")
         assert "VAT" not in addr
         assert result.data.get("vendor_vat") == "12345678X"
+
+    def test_address_no_slogan_lines(self):
+        """Slogan/tagline header lines (no digit, comma, or street word)
+        must not be captured as address (East101 'Rolls'n' Bowls' case)."""
+        text = (
+            "east101\nRolls'n' Bowls\nHUNGRY\nANGRY\n"
+            "Tax ID 10379360B\n1 Shawarma 14.50\nTotal 14.50"
+        )
+        result = parse_ocr_text(text, doc_type="receipt")
+        addr = result.data.get("vendor_address", "")
+        assert "Rolls" not in addr
+        assert "HUNGRY" not in addr
+        assert result.data.get("vendor_tax_id") == "10379360B"
+
+    def test_address_street_line_still_captured(self):
+        """Genuine address lines (number / street keyword) still captured."""
+        text = "ACME Cafe\n12 Makarios Ave\nLimassol, Cyprus\nTotal 3.00"
+        result = parse_ocr_text(text, doc_type="receipt")
+        addr = result.data.get("vendor_address", "")
+        assert "12 Makarios Ave" in addr
+        assert "Limassol, Cyprus" in addr
 
     # ---- 4. Weight / unit_quantity extraction ----
 

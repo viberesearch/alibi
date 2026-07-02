@@ -117,6 +117,45 @@ class EnrichmentScheduler:
         self._lock = threading.Lock()
         self._state = _load_state()
         self._last_result: EnrichmentCycleResult | None = None
+        # OS advisory lock ensuring only ONE scheduler runs machine-wide, even
+        # if both the API process and the watcher daemon try to start one.
+        self._lock_fh: Any = None
+
+    def _acquire_singleton_lock(self) -> bool:
+        """Take a machine-wide exclusive lock so only one scheduler runs.
+
+        Uses an ``flock`` on a lockfile beside the state file. Returns True if
+        acquired (this process owns the scheduler), False if another process
+        already holds it. On platforms without ``fcntl`` (e.g. Windows) the
+        lock is skipped and True is returned.
+        """
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - non-unix
+            return True
+        lock_path = _STATE_FILE.parent / "scheduler.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "w")
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            return False
+        self._lock_fh = fh
+        return True
+
+    def _release_singleton_lock(self) -> None:
+        if self._lock_fh is None:
+            return
+        try:
+            import fcntl
+
+            fcntl.flock(self._lock_fh.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):  # pragma: no cover
+            pass
+        finally:
+            self._lock_fh.close()
+            self._lock_fh = None
 
     @property
     def state(self) -> SchedulerState:
@@ -131,8 +170,14 @@ class EnrichmentScheduler:
         return self._running
 
     def start(self) -> None:
-        """Start the scheduler."""
+        """Start the scheduler (no-op if another instance already holds the lock)."""
         if self._running:
+            return
+        if not self._acquire_singleton_lock():
+            logger.warning(
+                "Enrichment scheduler already running elsewhere; "
+                "not starting a second instance"
+            )
             return
         self._running = True
         self._schedule_next()
@@ -147,6 +192,7 @@ class EnrichmentScheduler:
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
+        self._release_singleton_lock()
         logger.info("Enrichment scheduler stopped")
 
     def run_now(self) -> EnrichmentCycleResult:
@@ -205,6 +251,15 @@ class EnrichmentScheduler:
                 self._state.last_maintenance = now
             else:
                 result.phases.append(PhaseResult(name="maintenance", skipped=True))
+
+            # Phase 6: EUR-rate backstop. The ingestion finalizer stamps each
+            # fact at creation; this re-sweeps any left NULL (e.g. a foreign
+            # rate whose fetch failed at ingest, or facts imported another way).
+            result.phases.append(self._run_fx_backfill(db))
+
+            # Phase 7: Category backstop for any items still lacking a path
+            # (finalizer categorises per-document; this catches stragglers).
+            result.phases.append(self._run_categorize(db, limit))
 
             result.finished_at = time.time()
 
@@ -328,6 +383,46 @@ class EnrichmentScheduler:
             logger.exception("Maintenance failed")
             return PhaseResult(
                 name="maintenance",
+                duration_seconds=time.time() - start,
+                error=str(e),
+            )
+
+    def _run_fx_backfill(self, db: DatabaseManager) -> PhaseResult:
+        """Phase 6: resolve any still-NULL EUR rates and rebuild item_stars."""
+        start = time.time()
+        try:
+            from alibi.services.fx import backfill_fact_rates
+
+            stats = backfill_fact_rates(db)
+            return PhaseResult(
+                name="fx_backfill",
+                items_processed=int(stats.get("pairs_resolved", 0)),
+                duration_seconds=time.time() - start,
+            )
+        except Exception as e:
+            logger.exception("FX backfill failed")
+            return PhaseResult(
+                name="fx_backfill",
+                duration_seconds=time.time() - start,
+                error=str(e),
+            )
+
+    def _run_categorize(self, db: DatabaseManager, limit: int) -> PhaseResult:
+        """Phase 7: assign category paths to any items still lacking one."""
+        start = time.time()
+        try:
+            from alibi.enrichment.categorize import enrich_pending_categories
+
+            results = enrich_pending_categories(db, limit=limit)
+            return PhaseResult(
+                name="categorize",
+                items_processed=sum(1 for r in results if r.success),
+                duration_seconds=time.time() - start,
+            )
+        except Exception as e:
+            logger.exception("Categorize failed")
+            return PhaseResult(
+                name="categorize",
                 duration_seconds=time.time() - start,
                 error=str(e),
             )

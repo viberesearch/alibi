@@ -416,9 +416,14 @@ def delete_fact(db: DatabaseManager, fact_id: str) -> bool:
     with db.transaction() as cursor:
         cursor.execute("DELETE FROM fact_items WHERE fact_id = ?", (fact_id,))
         cursor.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
-        # Clean up cloud if no other facts reference it
+        # Clean up cloud only when fully orphaned. bundles.cloud_id also
+        # references clouds, so the cloud must stay while any bundle points
+        # at it (delete_fact called before delete_document) or the delete
+        # hits a FOREIGN KEY error and rolls back the whole transaction.
         remaining = cursor.execute(
-            "SELECT COUNT(*) FROM facts WHERE cloud_id = ?", (cloud_id,)
+            "SELECT (SELECT COUNT(*) FROM facts WHERE cloud_id = :c) "
+            "+ (SELECT COUNT(*) FROM bundles WHERE cloud_id = :c)",
+            {"c": cloud_id},
         ).fetchone()
         if remaining and remaining[0] == 0:
             cursor.execute("DELETE FROM cloud_bundles WHERE cloud_id = ?", (cloud_id,))

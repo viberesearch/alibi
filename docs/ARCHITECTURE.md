@@ -128,6 +128,16 @@ Processing is split into two phases:
 
 This enables a correction workflow: edit the YAML, re-process to update the database. The file watcher auto-detects YAML modifications.
 
+### Stage 4: Finalization
+Once a fact is persisted, `alibi.services.ingestion._finalize_ingestion` runs synchronously in the ingesting process (every interface routes through the ingestion service, so this needs no subscriber wiring -- important because the API server, the only long-running process in the default deployment, listens to no events). Per new fact it is best-effort and idempotent:
+1. **Reconcile** item totals to the printed total (the weighed-line double-multiply guard); runs first because a successful reconcile re-collapses the cloud.
+2. **Stamp `eur_rate`** at creation (EUR -> 1.0 with no network; foreign -> historical rate) so the fact is EUR-comparable immediately, with no silent-NULL window before a `lt fx backfill` sweep.
+3. **Categorize** the document's items against the local taxonomy (document-scoped, so an upload never processes the global backlog).
+4. **Duplicate check** (detection only): logs if the upload duplicates an existing receipt; never auto-merges, so a legitimate re-visit is not silently collapsed.
+5. **Refresh `item_stars`** so the `*_eur` / category columns reflect the above.
+
+A date failing the plausibility guard (older than 2 years, or in the future beyond a small clock-skew) is corrected from the raw OCR text when possible, otherwise the document is flagged `needs_review` rather than writing a corrupt `event_date`.
+
 ---
 
 ## Atom-Cloud-Fact Data Model
@@ -218,6 +228,10 @@ flowchart TD
 | 8 | Anthropic cloud | 0.85 | brand, category refinement |
 
 Each source records its provenance (`enrichment_source`) and confidence (`enrichment_confidence`). Higher-confidence sources override lower ones.
+
+### Background Scheduler
+
+The barcode/name/Gemini cascade, plus periodic FX-rate and category backstops (re-sweeping anything the per-upload ingest finalizer left unresolved), run on a timer via `EnrichmentScheduler`. It is **DB-polling** (it queries for un-enriched items), so it covers facts from *every* ingest path — API, Telegram, CLI — not just the file watcher, and its cursor state is persisted to disk so it is restart-safe. It starts inside whichever long-running process is up (the API server via its FastAPI `lifespan`, or the watcher daemon); a machine-wide `flock` guarantees only one instance runs at a time. Enable with `ALIBI_ENRICHMENT_SCHEDULE_ENABLED=true`. This is the durable counterpart to Stage 4: the finalizer makes each fact analytics-ready *synchronously* at ingest, and the scheduler *eventually* fills the network/LLM-dependent product fields and repairs any gaps.
 
 ### Local Field-Filling Passes
 

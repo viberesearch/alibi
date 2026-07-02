@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ["ALIBI_TESTING"] = "1"
 
-from alibi.services.fx import backfill_fact_rates, get_eur_per_unit
+from alibi.services.fx import backfill_fact_rates, get_eur_per_unit, stamp_fact_rate
 
 
 def _seed_fact(db, fact_id, *, currency="EUR", event_date="2025-06-02", total=10.0):
@@ -189,6 +189,36 @@ class TestBackfillFactRates:
         assert row["eur_rate"] is None
         assert stats["pairs_unresolved"] == 1
         assert stats["facts_unconverted"] == 1
+
+
+class TestStampFactRate:
+    """Per-fact eur_rate stamping used by the ingestion finalizer."""
+
+    def test_eur_fact_stamped_one_without_network(self, db):
+        _seed_fact(db, "e", currency="EUR")
+        # fetch=False proves EUR needs no network to resolve.
+        rate = stamp_fact_rate(db, "e", fetch=False)
+        assert rate == 1.0
+        row = db.fetchone("SELECT eur_rate FROM facts WHERE id='e'")
+        assert row["eur_rate"] == 1.0
+
+    def test_foreign_fact_stamped_from_cache(self, db):
+        _seed_fact(db, "c", currency="CAD", event_date="2025-06-02")
+        _cache_rate(db, "CAD", "2025-06-02", 0.68)
+        rate = stamp_fact_rate(db, "c", fetch=False)
+        assert abs(rate - 0.68) < 1e-9
+        row = db.fetchone("SELECT eur_rate FROM facts WHERE id='c'")
+        assert abs(row["eur_rate"] - 0.68) < 1e-9
+
+    def test_unresolved_foreign_left_null(self, db):
+        _seed_fact(db, "t", currency="TRY", event_date="2025-05-13")
+        rate = stamp_fact_rate(db, "t", fetch=False)
+        assert rate is None
+        row = db.fetchone("SELECT eur_rate FROM facts WHERE id='t'")
+        assert row["eur_rate"] is None
+
+    def test_missing_fact_is_none(self, db):
+        assert stamp_fact_rate(db, "does-not-exist", fetch=False) is None
 
 
 class TestItemStarsEurMaterialisation:

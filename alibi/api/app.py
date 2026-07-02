@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,6 +14,55 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from alibi import __version__
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Run the enrichment scheduler inside the API process.
+
+    In the default deployment the API server is the only long-running process,
+    so post-fact product enrichment (barcode / Open Food Facts / name matching /
+    Gemini) plus the periodic FX + category backstop have no home unless started
+    here. The scheduler is DB-polling (works for every ingest path, not just the
+    file watcher) and persists its state to disk, so it is restart-safe; a
+    machine-wide flock keeps a second instance (e.g. a watcher daemon) from
+    double-running. Gated by ``enrichment_schedule_enabled`` (default off) so
+    tests and one-shot invocations never spawn a background thread.
+    """
+    from alibi.config import get_config
+
+    scheduler = None
+    sched_db = None
+    config = get_config()
+    if config.enrichment_schedule_enabled:
+        try:
+            from alibi.daemon.scheduler import EnrichmentScheduler
+            from alibi.db.connection import DatabaseManager
+
+            # Dedicated connection so the timer thread never contends with the
+            # request-path singleton on writes.
+            sched_db = DatabaseManager(config)
+            if not sched_db.is_initialized():
+                sched_db.initialize()
+            scheduler = EnrichmentScheduler(db_factory=lambda: sched_db, config=config)
+            scheduler.start()
+            if not scheduler.is_running:
+                scheduler = None  # another instance holds the lock
+        except Exception:
+            logger.exception("Failed to start in-API enrichment scheduler")
+            scheduler = None
+
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.stop()
+        if sched_db is not None:
+            sched_db.close()
+
+
 from alibi.api.middleware import (
     RateLimitMiddleware,
     RequestLoggingMiddleware,
@@ -51,6 +102,7 @@ def create_app() -> FastAPI:
         description="Life Tracker API - headless engine for document and transaction management",
         version=__version__,
         redirect_slashes=False,
+        lifespan=_lifespan,
     )
 
     # Global exception handler: prevent internal details leaking

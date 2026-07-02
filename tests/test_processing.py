@@ -1,7 +1,7 @@
 """Tests for processing modules."""
 
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -532,6 +532,140 @@ class TestDateValidation:
         p = self._pipeline()
         result = p._validate_date(None, "some text 01/01/2026")
         assert result is None
+
+    def test_extracted_date_future_flagged_for_review(self):
+        """An implausible future date (OCR year misread) is flagged, not
+        silently written into event_date."""
+        p = self._pipeline()
+        data = {"date": "2028-04-25", "raw_text": "SESAME\nDate: 25/04/2028"}
+        p._validate_extracted_date(data, data["raw_text"])
+        assert data["_cv_needs_review"] is True
+        assert data["_date_out_of_range"] == "2028-04-25"
+        p.close()
+
+    def test_extracted_date_corrected_from_raw_text(self):
+        """A hallucinated date is corrected to the one printed on the receipt."""
+        p = self._pipeline()
+        raw = "Terminal 0045930\n17/02/2026 12:38:37"
+        data = {"date": "2023-03-13", "raw_text": raw}
+        p._validate_extracted_date(data, raw)
+        assert data["date"] == "2026-02-17"
+        assert "_cv_needs_review" not in data
+        p.close()
+
+    def test_extracted_date_sane_untouched(self):
+        """A plausible date matching the raw text is left alone, no review flag."""
+        p = self._pipeline()
+        raw = "Receipt 17/02/2026 12:38:37"
+        data = {"date": "2026-02-17", "raw_text": raw}
+        p._validate_extracted_date(data, raw)
+        assert data["date"] == "2026-02-17"
+        assert "_cv_needs_review" not in data
+        assert "_date_out_of_range" not in data
+        p.close()
+
+    def test_missing_date_flagged_for_review(self):
+        """A dateless fact must surface for review, not silently vanish from
+        the date/EUR analytics."""
+        p = self._pipeline()
+        data = {"raw_text": "SHOP\nTOTAL 12.00"}  # no date field
+        p._validate_extracted_date(data, data["raw_text"])
+        assert data["_cv_needs_review"] is True
+        assert data["_date_missing"] is True
+        p.close()
+
+    def test_unparseable_date_flagged_for_review(self):
+        """A date string that cannot be parsed is flagged, not dropped."""
+        p = self._pipeline()
+        data = {"date": "garbage-date", "raw_text": "SHOP"}
+        p._validate_extracted_date(data, "SHOP")
+        assert data["_cv_needs_review"] is True
+        assert data["_date_unparseable"] == "garbage-date"
+        p.close()
+
+    def test_validate_date_keeps_disambiguated_swap(self):
+        """A day/month swap of an ambiguous raw-text date is trusted.
+
+        Disambiguation may legitimately pick the MM/DD reading of
+        "03/04/2025"; validation must not revert it to the DMY parse.
+        """
+        p = self._pipeline()
+        result = p._validate_date(
+            date(2025, 3, 4),  # MM/DD reading of the printed date
+            "SHOP\n03/04/2025\nTOTAL 5.00",
+        )
+        assert result == date(2025, 3, 4)
+        p.close()
+
+
+class TestDateDisambiguationChokepoint:
+    """Date disambiguation runs in _strip_pipeline_meta (all four
+    extraction paths), not just the fresh-extraction path."""
+
+    def _pipeline(self) -> Any:
+        from alibi.processing.pipeline import ProcessingPipeline
+
+        return ProcessingPipeline()
+
+    def test_ambiguous_date_disambiguated_via_chokepoint(self, tmp_path):
+        """Cached-YAML re-ingest (no explicit _disambiguate_date call)
+        still resolves DD/MM vs MM/DD using the source file's mtime."""
+        import os
+
+        p = self._pipeline()
+        src = tmp_path / "IMG_TEST.jpg"
+        src.write_bytes(b"x")
+        # File photographed around March 5, 2025 -> "03/04/2025" is
+        # March 4 (MM/DD), not April 3 (DD/MM); both readings are in the
+        # past so only file-date proximity decides.
+        mtime = datetime(2025, 3, 5, 12, 0).timestamp()
+        os.utime(src, (mtime, mtime))
+        data = {
+            "date": "03/04/2025",
+            "raw_text": "SHOP\n03/04/2025\nTOTAL 5.00",
+            "_two_stage_confidence": 0.9,
+        }
+        p._strip_pipeline_meta(data, src)
+        assert data["date"] == "2025-03-04"
+        p.close()
+
+    def test_iso_date_untouched_via_chokepoint(self, tmp_path):
+        """An unambiguous ISO date (e.g. human-corrected YAML) is never
+        swapped, whatever the file mtime suggests."""
+        import os
+
+        p = self._pipeline()
+        src = tmp_path / "IMG_TEST.jpg"
+        src.write_bytes(b"x")
+        mtime = datetime(2025, 4, 2, 12, 0).timestamp()  # near the swap
+        os.utime(src, (mtime, mtime))
+        data = {
+            "date": "2025-03-04",
+            "raw_text": "SHOP\n03/04/2025\nTOTAL 5.00",
+            "_two_stage_confidence": 0.9,
+        }
+        p._strip_pipeline_meta(data, src)
+        assert data["date"] == "2025-03-04"
+        p.close()
+
+    def test_chokepoint_tolerates_missing_file(self):
+        """Cached re-ingests where the photo was deleted still work."""
+        p = self._pipeline()
+        data = {
+            "date": "2026-02-17",
+            "raw_text": "Receipt 17/02/2026",
+            "_two_stage_confidence": 0.9,
+        }
+        p._strip_pipeline_meta(data, Path("/nonexistent/IMG_GONE.jpg"))
+        assert data["date"] == "2026-02-17"
+        p._strip_pipeline_meta(
+            {
+                "date": "2026-02-17",
+                "raw_text": "Receipt 17/02/2026",
+                "_two_stage_confidence": 0.9,
+            },
+            None,
+        )
         p.close()
 
     def test_extract_dates_from_text(self):

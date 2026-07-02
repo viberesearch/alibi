@@ -102,6 +102,104 @@ def persist_upload_group(
     return saved
 
 
+def _finalize_ingestion(db: DatabaseManager, result: ProcessingResult) -> None:
+    """Make a freshly-created fact analytics-ready in the ingesting process.
+
+    In the default deployment the API server (``lt serve``) is the only
+    long-running process and it wires no event subscribers, so the post-fact
+    steps that otherwise rely on the watcher daemon / enrichment scheduler
+    never run for API / Telegram uploads. This performs them synchronously, in
+    whatever process ingested the document, so a receipt is complete the moment
+    it lands rather than needing a manual ``lt fx backfill`` /
+    ``lt enrich categorize`` follow-up:
+
+      1. reconcile item totals to the printed total (the weighed-line
+         double-multiply guard) -- runs first because a successful reconcile
+         re-collapses the cloud (new fact id) and would otherwise leave the new
+         fact unrated;
+      2. stamp ``facts.eur_rate`` (EUR -> 1.0; foreign -> historical rate);
+      3. assign a local-taxonomy category to this document's uncategorised
+         items (document-scoped, so the global backlog is never dragged in);
+      4. detect (never auto-merge) whether this upload duplicates an
+         already-stored receipt, and log it for review;
+      5. refresh the ``item_stars`` mirror so the ``*_eur`` / category columns
+         reflect the above.
+
+    Every step is best-effort and idempotent: a failure in one is logged and
+    never blocks ingestion, event emission, or the remaining steps.
+    """
+    if not result.success or result.is_duplicate or not result.document_id:
+        return
+
+    from alibi.db import v2_store
+
+    document_id = result.document_id
+    short = document_id[:8]
+
+    # 1. Reconcile line totals to the printed total (may re-collapse the cloud).
+    try:
+        from alibi.services.reconcile import reconcile_fact
+
+        for fact in v2_store.get_facts_for_document(db, document_id):
+            fact_id = fact.get("id")
+            if fact_id:
+                reconcile_fact(db, fact_id, apply=True)
+    except Exception:
+        logger.exception("Finalize: price reconciliation failed for %s", short)
+
+    # 2. Stamp EUR rate on the (possibly re-collapsed) facts.
+    try:
+        from alibi.services.fx import stamp_fact_rate
+
+        for fact in v2_store.get_facts_for_document(db, document_id):
+            fact_id = fact.get("id")
+            if fact_id:
+                stamp_fact_rate(db, fact_id)
+    except Exception:
+        logger.exception("Finalize: EUR rate stamping failed for %s", short)
+
+    # 3. Categorise just this document's items (local taxonomy, no cloud call).
+    try:
+        from alibi.enrichment.categorize import enrich_pending_categories
+
+        enrich_pending_categories(db, document_id=document_id)
+    except Exception:
+        logger.exception("Finalize: categorisation failed for %s", short)
+
+    # 4. Detection-only duplicate check: warn if THIS upload duplicates an
+    #    existing receipt. Never auto-deletes here -- resolution stays a
+    #    deliberate `lt` action so a legitimate re-visit is not silently merged.
+    try:
+        from alibi.services.dedup import deduplicate_facts
+
+        new_fact_ids = {
+            f.get("id") for f in v2_store.get_facts_for_document(db, document_id)
+        }
+        report = deduplicate_facts(db, apply=False)
+        for action in report.resolved + report.review:
+            if action.redundant.fact_id in new_fact_ids:
+                logger.warning(
+                    "Finalize: %s looks like a duplicate of %s (%s) — "
+                    "%s %s %s; review with `lt facts dedup`",
+                    short,
+                    action.keeper.fact_id[:8],
+                    action.reason,
+                    action.keeper.vendor,
+                    action.keeper.event_date,
+                    action.keeper.total_amount,
+                )
+    except Exception:
+        logger.exception("Finalize: duplicate check failed for %s", short)
+
+    # 5. Sync the materialised analytics mirror with the writes above.
+    try:
+        from alibi.services.item_stars import refresh_item_stars_for_document
+
+        refresh_item_stars_for_document(db, document_id)
+    except Exception:
+        logger.exception("Finalize: item_stars refresh failed for %s", short)
+
+
 def _emit_ingestion_events(result: ProcessingResult) -> None:
     """Emit events for a successful processing result."""
     if not result.success:
@@ -149,6 +247,7 @@ def process_file(
         Path(path),
         folder_context=folder_context,
     )
+    _finalize_ingestion(db, result)
     _emit_ingestion_events(result)
     return result
 
@@ -175,10 +274,14 @@ def process_batch(
     """
     resolved = [Path(p) for p in paths]
     folder_contexts = [folder_context] * len(resolved) if folder_context else None
-    return ProcessingPipeline(db).process_batch(
+    results = ProcessingPipeline(db).process_batch(
         resolved,
         folder_contexts=folder_contexts,
     )
+    for result in results:
+        _finalize_ingestion(db, result)
+        _emit_ingestion_events(result)
+    return results
 
 
 def process_document_group(
@@ -212,6 +315,7 @@ def process_document_group(
     result = pipeline.process_document_group(
         folder_path, resolved, folder_context=folder_context
     )
+    _finalize_ingestion(db, result)
     _emit_ingestion_events(result)
     return result
 
