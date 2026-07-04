@@ -9,6 +9,8 @@ from alibi.extraction.barcode_detector import (
     _is_valid_ean,
     detect_barcodes,
     has_barcode_support,
+    resolve_line_item_barcodes,
+    sanitize_barcode,
 )
 
 # ---------------------------------------------------------------------------
@@ -180,3 +182,105 @@ class TestDetectBarcodes:
         """Return type is always list regardless of pyzbar availability."""
         result = detect_barcodes(b"not an image")
         assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# sanitize_barcode
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeBarcode:
+    def test_keeps_valid_ean13(self):
+        assert sanitize_barcode("5290143000608") == "5290143000608"
+
+    def test_keeps_valid_ean8(self):
+        assert sanitize_barcode("96385074") == "96385074"
+
+    def test_strips_non_digits(self):
+        assert sanitize_barcode(" 5290143000608\n") == "5290143000608"
+
+    def test_accepts_int(self):
+        assert sanitize_barcode(5290143000608) == "5290143000608"
+
+    def test_promotes_valid_upca_to_ean13(self):
+        # 036000291452 is a canonical valid UPC-A; leading zero -> EAN-13.
+        assert sanitize_barcode("036000291452") == "0036000291452"
+
+    def test_nulls_checksum_failure(self):
+        # OCR-fused code observed on a real ALPHAMEGA receipt (bad check digit).
+        assert sanitize_barcode("5290033002245") is None
+
+    def test_nulls_store_weight_plu(self):
+        # 13-digit weight-embedded produce label, not a GS1 code.
+        assert sanitize_barcode("2104255000000") is None
+
+    def test_nulls_fragment(self):
+        assert sanitize_barcode("0085") is None
+
+    def test_nulls_empty_and_none(self):
+        assert sanitize_barcode("") is None
+        assert sanitize_barcode(None) is None
+        assert sanitize_barcode("   ") is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_line_item_barcodes
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLineItemBarcodes:
+    def test_sanitizes_each_item(self):
+        items = [
+            {"name": "A", "barcode": "5290143000608"},
+            {"name": "B", "barcode": "0085"},
+        ]
+        resolve_line_item_barcodes(items)
+        assert items[0]["barcode"] == "5290143000608"
+        assert items[1]["barcode"] is None
+
+    def test_nulls_valid_barcode_shared_by_distinct_products(self):
+        # LLM copied one valid EAN onto two distinct products -> null both.
+        code = "5290143000608"
+        items = [
+            {"name": "ICE CREAM", "barcode": code},
+            {"name": "YOGURT", "barcode": code},
+        ]
+        resolve_line_item_barcodes(items)
+        assert items[0]["barcode"] is None
+        assert items[1]["barcode"] is None
+
+    def test_keeps_valid_barcode_repeated_on_same_product(self):
+        # Same product on two lines (repeat purchase / OCR split) -> keep.
+        code = "5290143000608"
+        items = [
+            {"name": " TYRI QUARK 3%", "barcode": code},
+            {"name": "Tyri Quark 3%", "barcode": code},
+        ]
+        resolve_line_item_barcodes(items)
+        assert items[0]["barcode"] == code
+        assert items[1]["barcode"] == code
+
+    def test_the_alphamega_regression(self):
+        # Both lines shared an invalid OCR-fused barcode: sanitize alone nulls.
+        items = [
+            {"name": "P&P VANILLA ICE CREA", "barcode": "5290033002245"},
+            {"name": "CHARAL/CHRISTIS STRA", "barcode": "5290033002245"},
+        ]
+        resolve_line_item_barcodes(items)
+        assert items[0]["barcode"] is None
+        assert items[1]["barcode"] is None
+
+    def test_keeps_distinct_valid_barcodes(self):
+        items = [
+            {"name": "A", "barcode": "5290143000608"},
+            {"name": "B", "barcode": "4006381333931"},
+        ]
+        resolve_line_item_barcodes(items)
+        assert items[0]["barcode"] == "5290143000608"
+        assert items[1]["barcode"] == "4006381333931"
+
+    def test_leaves_items_without_barcode_key_untouched(self):
+        items = [{"name": "A"}, {"name": "B", "barcode": "5290143000608"}]
+        resolve_line_item_barcodes(items)
+        assert "barcode" not in items[0]
+        assert items[1]["barcode"] == "5290143000608"

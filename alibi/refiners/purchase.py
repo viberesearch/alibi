@@ -179,6 +179,12 @@ class PurchaseRefiner(BaseRefiner):
             if item:
                 line_items.append(item)
 
+        # Sanitize barcodes to valid GS1 identities and null any that are
+        # invalid or duplicated across lines (OCR fusion / neighbour copy).
+        from alibi.extraction.barcode_detector import resolve_line_item_barcodes
+
+        resolve_line_item_barcodes(line_items)
+
         return line_items
 
     def _parse_single_line_item(

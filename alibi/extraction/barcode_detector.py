@@ -7,7 +7,9 @@ Falls back gracefully if pyzbar or libzbar is not installed.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,85 @@ def _is_valid_ean(digits: str) -> bool:
         return total % 10 == 0
     except (ValueError, IndexError):
         return False
+
+
+def sanitize_barcode(raw: object) -> str | None:
+    """Canonicalize a line-item barcode to a trustworthy GS1 identity, or None.
+
+    Receipt OCR routinely mangles barcodes -- fusing adjacent lines' digits,
+    dropping the check digit, or capturing a store weight-embedded PLU label
+    that is not a GS1 code at all. A barcode is only useful to alibi as a
+    cross-vendor, cross-document product identity if it is a valid GS1 code,
+    so a value we cannot validate is worse than no value: it invents false
+    product identity and collides distinct products. This function:
+
+    - strips whitespace and non-digit noise,
+    - keeps valid EAN-8 / EAN-13 codes as-is,
+    - promotes a valid 12-digit UPC-A to its canonical 13-digit EAN form
+      (an implicit leading zero) so it matches the same product elsewhere,
+    - returns None for everything else (OCR fragments, checksum failures, and
+      store weight-PLU labels that carry no cross-vendor identity).
+    """
+    if raw is None:
+        return None
+    digits = re.sub(r"\D", "", str(raw))
+    if not digits:
+        return None
+    if _is_valid_ean(digits):
+        return digits
+    # UPC-A (12 digits) is an EAN-13 with an implicit leading zero.
+    if len(digits) == 12 and _is_valid_ean("0" + digits):
+        return "0" + digits
+    return None
+
+
+def _name_signature(name: object) -> str:
+    """Loose product-name key for collision detection (case/space-insensitive)."""
+    return re.sub(r"\s+", " ", str(name or "").strip().lower())
+
+
+def resolve_line_item_barcodes(
+    items: list[dict[str, Any]],
+    key: str = "barcode",
+    name_key: str = "name",
+) -> list[dict[str, Any]]:
+    """Sanitize and disambiguate barcodes across one document's line items.
+
+    Mutates each dict in place:
+
+    1. Replaces every barcode with its canonical GS1 form via
+       :func:`sanitize_barcode` (nulling values that cannot be validated).
+    2. Nulls any barcode shared by lines with *different* product names --
+       almost always the LLM copying a neighbour's code, so it identifies
+       neither product. A barcode repeated on lines with the *same* name is
+       kept: that is the same product legitimately appearing twice (a genuine
+       repeat purchase or an OCR-split line), where the barcode is still valid.
+
+    Returns the same list for convenience.
+    """
+    for item in items:
+        if key in item:
+            item[key] = sanitize_barcode(item.get(key))
+
+    # Collect the distinct product names each surviving barcode appears under.
+    names_by_code: dict[str, set[str]] = {}
+    for item in items:
+        value = item.get(key)
+        if value:
+            names_by_code.setdefault(value, set()).add(
+                _name_signature(item.get(name_key))
+            )
+
+    ambiguous = {code for code, names in names_by_code.items() if len(names) > 1}
+    for item in items:
+        value = item.get(key)
+        if value and value in ambiguous:
+            logger.info(
+                "Nulled ambiguous barcode %s shared by distinct products", value
+            )
+            item[key] = None
+
+    return items
 
 
 def detect_barcodes(image_data: bytes) -> list[BarcodeResult]:
