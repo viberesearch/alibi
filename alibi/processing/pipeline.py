@@ -920,20 +920,44 @@ class ProcessingPipeline:
         self._fill_vendor_gaps(extracted_data, folder_context)
         self._fill_locale_gaps(extracted_data, folder_context)
 
-        # 2a. Swap payment processor with actual merchant name
-        from alibi.extraction.text_parser import _swap_processor_vendor
+        # 2a. Swap payment processor with actual merchant name; drop vendors
+        # that are just the document's own heading ("Кассовый чек", "RECEIPT")
+        from alibi.extraction.text_parser import (
+            _swap_generic_title_vendor,
+            _swap_processor_vendor,
+        )
 
         _swap_processor_vendor(extracted_data)
+        _swap_generic_title_vendor(extracted_data)
 
         # 2.5. Item verification (Layer 1 + optional Layer 2)
         if extracted_data.get("line_items"):
-            from alibi.extraction.item_verifier import verify_items, verify_items_llm
+            from alibi.extraction.item_verifier import (
+                recover_line_items,
+                verify_items,
+                verify_items_llm,
+            )
 
             iv_result = verify_items(extracted_data)
             if iv_result.flags:
                 ocr_text = extracted_data.get("_ocr_text", "")
                 if ocr_text:
                     verify_items_llm(extracted_data, iv_result.flags, ocr_text)
+
+            # Verification can empty the basket entirely (every extracted row
+            # was a header / bare number — the split-line item layout). If the
+            # OCR still shows amount lines, the receipt has real items: run
+            # one focused recovery pass rather than persisting itemless data;
+            # if recovery fails too, mark for review so it isn't silent.
+            if iv_result.items_removed and not extracted_data.get("line_items"):
+                if not recover_line_items(extracted_data):
+                    extracted_data["_cv_needs_review"] = True
+                    logger.warning(
+                        "All %d extracted item(s) were removed as garbage and "
+                        "recovery found none for %s; flagging for review",
+                        iv_result.items_removed,
+                        file_path.name,
+                    )
 
         # 3. Verify extraction + extract pipeline metadata
         # (includes date disambiguation + validation at the shared chokepoint)
@@ -2138,11 +2162,23 @@ class ProcessingPipeline:
         """
         yaml_result = read_yaml_with_meta(source_path, is_group)
         if yaml_result is None:
-            _found = find_yaml_in_store(source_path, is_group=is_group)
-            if _found is not None:
-                from alibi.extraction.yaml_cache import read_yaml_direct
+            # The document may have been ingested under a real user (not
+            # "system"): prefer the exact yaml_path stored on its DB record,
+            # then fall back to a store-wide search across all users.
+            from alibi.extraction.yaml_cache import read_yaml_direct
 
-                yaml_result = read_yaml_direct(_found)
+            _doc = v2_store.get_document_by_path(db, str(source_path.resolve()))
+            if _doc is None:
+                _doc = v2_store.get_document_by_path(db, str(source_path))
+            _stored = (_doc or {}).get("yaml_path")
+            if _stored and Path(_stored).exists():
+                yaml_result = read_yaml_direct(Path(_stored))
+            if yaml_result is None:
+                _found = find_yaml_in_store(
+                    source_path, is_group=is_group, user_id=None
+                )
+                if _found is not None:
+                    yaml_result = read_yaml_direct(_found)
         if yaml_result is None:
             return ProcessingResult(
                 success=False,
@@ -2188,6 +2224,17 @@ class ProcessingPipeline:
         for key in ("_two_stage_confidence", "_pipeline", "_parser_confidence"):
             extracted_data.pop(key, None)
 
+        # Preserve ownership and YAML linkage across the re-ingest — without
+        # this the rebuilt document is reassigned to "system"/"cli" and loses
+        # its yaml_path, breaking future correction detection.
+        reingest_context: FolderContext | None = None
+        if existing_doc:
+            if existing_doc.get("user_id") or existing_doc.get("source"):
+                reingest_context = FolderContext(
+                    source=existing_doc.get("source"),
+                    user_id=existing_doc.get("user_id"),
+                )
+
         result = self._ingest_from_yaml(
             db,
             source_path,
@@ -2195,7 +2242,9 @@ class ProcessingPipeline:
             perceptual_hash,
             extracted_data,
             doc_type,
+            folder_context=reingest_context,
             is_group=is_group,
+            yaml_path=existing_doc.get("yaml_path") if existing_doc else None,
         )
 
         # Migrate annotations from old fact to new

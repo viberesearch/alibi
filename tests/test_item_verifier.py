@@ -943,3 +943,92 @@ class TestBarcodeItemValidation:
         }
         flags = validate_barcode_items(extracted, db=None)
         assert len(flags) == 0
+
+
+class TestRecoverLineItems:
+    """Basket recovery after verification emptied line_items."""
+
+    _OCR = (
+        "КОФЕМАНИЯ\n"
+        "Наименование\nКол-во\nСумма\n"
+        "C/C ферма Иемен Аль Хайма\n250мл\n1 550,00\n"
+        "ИТОГО К ОПЛАТЕ:\n550,00\n"
+    )
+
+    def _extracted(self, **kw):
+        base = {"line_items": [], "total": 550.0, "_ocr_text": self._OCR}
+        base.update(kw)
+        return base
+
+    def test_recovers_items_from_llm(self, monkeypatch):
+        from alibi.extraction import structurer
+        from alibi.extraction.item_verifier import recover_line_items
+
+        monkeypatch.setattr(
+            structurer,
+            "structure_ocr_text",
+            lambda *a, **kw: {
+                "items": [
+                    {
+                        "name": "C/C ферма Иемен Аль Хайма 250мл",
+                        "quantity": 1,
+                        "unit_price": 550.0,
+                        "total_price": 550.0,
+                    }
+                ]
+            },
+        )
+        extracted = self._extracted()
+        assert recover_line_items(extracted) is True
+        assert len(extracted["line_items"]) == 1
+        assert extracted["line_items"][0]["name"].startswith("C/C ферма")
+
+    def test_no_amount_lines_skips_llm(self, monkeypatch):
+        from alibi.extraction import structurer
+        from alibi.extraction.item_verifier import recover_line_items
+
+        def _boom(*a, **kw):
+            raise AssertionError("LLM must not be called")
+
+        monkeypatch.setattr(structurer, "structure_ocr_text", _boom)
+        extracted = self._extracted(_ocr_text="КОФЕМАНИЯ\nСпасибо!")
+        assert recover_line_items(extracted) is False
+
+    def test_nonempty_basket_untouched(self, monkeypatch):
+        from alibi.extraction import structurer
+        from alibi.extraction.item_verifier import recover_line_items
+
+        def _boom(*a, **kw):
+            raise AssertionError("LLM must not be called")
+
+        monkeypatch.setattr(structurer, "structure_ocr_text", _boom)
+        extracted = self._extracted(
+            line_items=[{"name": "Espresso", "total_price": 3.0}]
+        )
+        assert recover_line_items(extracted) is False
+
+    def test_recovered_garbage_is_reverified_and_rejected(self, monkeypatch):
+        from alibi.extraction import structurer
+        from alibi.extraction.item_verifier import recover_line_items
+
+        monkeypatch.setattr(
+            structurer,
+            "structure_ocr_text",
+            lambda *a, **kw: {
+                "items": [{"name": "1", "quantity": 1, "total_price": 550.0}]
+            },
+        )
+        extracted = self._extracted()
+        assert recover_line_items(extracted) is False
+        assert extracted["line_items"] == []
+
+    def test_llm_failure_returns_false(self, monkeypatch):
+        from alibi.extraction import structurer
+        from alibi.extraction.item_verifier import recover_line_items
+
+        def _fail(*a, **kw):
+            raise RuntimeError("ollama down")
+
+        monkeypatch.setattr(structurer, "structure_ocr_text", _fail)
+        extracted = self._extracted()
+        assert recover_line_items(extracted) is False

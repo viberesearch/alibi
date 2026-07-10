@@ -150,6 +150,74 @@ _PAYMENT_PROCESSORS = {
 }
 
 
+# Generic document titles — a receipt's own heading, never a vendor name.
+# Multi-word entries are safe as substrings; the single-word entries are
+# matched only against the entire (stripped, lowered) value.
+_GENERIC_DOC_TITLES = {
+    "кассовый чек",
+    "товарный чек",
+    "фискальный чек",
+    "fiscal receipt",
+    "cash receipt",
+    "sales receipt",
+    "kassenbon",
+    "kassenbeleg",
+    "απόδειξη λιανικής",
+    "απόδειξη λιανικής πώλησης",
+}
+_GENERIC_DOC_TITLE_EXACT = {
+    "чек",
+    "квитанция",
+    "receipt",
+    "invoice",
+    "ticket",
+    "απόδειξη",
+}
+
+
+def _is_generic_doc_title(value: str) -> bool:
+    """True when the value is a document heading rather than a vendor name."""
+    low = value.strip().lower()
+    if not low:
+        return False
+    if low in _GENERIC_DOC_TITLE_EXACT:
+        return True
+    return any(t in low for t in _GENERIC_DOC_TITLES)
+
+
+def _is_decoration_line(value: str) -> bool:
+    """True for separator/decoration rows (asterisk runs, ruled lines).
+
+    Receipts frame their header in ``****``/``----`` rows; OCR or the LLM
+    sometimes promotes one to vendor. A value with no word characters at all
+    can never be a name.
+    """
+    stripped = value.strip()
+    return bool(stripped) and re.match(r"^[\W_]+$", stripped) is not None
+
+
+def _swap_generic_title_vendor(data: dict[str, Any]) -> None:
+    """Clear or replace a vendor that is a heading or decoration, not a name.
+
+    OCR/LLM extraction sometimes promotes the receipt title ("Кассовый чек",
+    "RECEIPT") or a ``****`` separator row to vendor, which then becomes a
+    bogus vendor identity and vendor_key. Prefer the legal name when present;
+    otherwise drop the value — an empty vendor routes to the tax-id/vendor-key
+    path and review, which is strictly better than a fake vendor shared by
+    every receipt of that layout.
+    """
+    vendor = (data.get("vendor") or "").strip()
+    if not vendor:
+        return
+    if not (_is_generic_doc_title(vendor) or _is_decoration_line(vendor)):
+        return
+    legal = (data.get("vendor_legal_name") or "").strip()
+    if legal and not (_is_generic_doc_title(legal) or _is_decoration_line(legal)):
+        data["vendor"] = legal
+    else:
+        data["vendor"] = ""
+
+
 def _swap_processor_vendor(data: dict[str, Any]) -> None:
     """Swap vendor with vendor_legal_name when vendor is a payment processor.
 
@@ -767,6 +835,13 @@ def _is_noise_line(line: str) -> bool:
     for noise in _HEADER_NOISE:
         if noise in low:
             return True
+    # Generic document titles ("Кассовый чек", "RECEIPT") are headings, not
+    # vendor candidates
+    if _is_generic_doc_title(low):
+        return True
+    # Decoration/separator rows (asterisk runs, ruled lines)
+    if _is_decoration_line(low):
+        return True
     # Lines that are just numbers or codes
     if re.match(r"^[\d\s\-/.]+$", low):
         return True

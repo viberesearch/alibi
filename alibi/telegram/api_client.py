@@ -30,8 +30,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_API_URL = "http://host.docker.internal:3100"
 API_PREFIX = "/api/v1"
-# Process can be slow (OCR + local LLM structuring); give it room.
-PROCESS_TIMEOUT_SECONDS = 180.0
+# Process can be slow (OCR + local LLM structuring); give it room. Long
+# multi-item receipts have been observed at ~5 minutes end-to-end (OCR 54s +
+# local LLM 222s + enrichment), so anything under ~6 minutes cuts off replies
+# for documents that DO finish server-side.
+PROCESS_TIMEOUT_SECONDS = 420.0
 QUERY_TIMEOUT_SECONDS = 30.0
 _MAX_RETRIES = 3
 _BACKOFF_BASE_SECONDS = 1.5
@@ -48,6 +51,16 @@ class AlibiAPIConnectionError(AlibiAPIError):
     responses) so callers can spool-and-retry connection failures while still
     surfacing genuine server errors immediately. Only connection failures should
     be spooled: a 4xx means the request itself is bad and retrying won't help.
+    """
+
+
+class AlibiAPITimeoutError(AlibiAPIError):
+    """Raised when the API accepted the request but the response timed out.
+
+    Distinct from both other errors because the request was DELIVERED: the
+    server is most likely still processing the document and will persist it.
+    Callers must neither spool a retry (that re-uploads a document the server
+    already has) nor tell the user to resend — both create duplicates.
     """
 
 
@@ -141,6 +154,14 @@ class AlibiAPIClient:
                     wait,
                 )
                 await asyncio.sleep(wait)
+            except httpx.TimeoutException as exc:
+                # Read/write/pool timeout AFTER the connection was established:
+                # the server has the request and is likely still processing it.
+                # Retrying would re-submit the same document, so surface it as
+                # its own error instead of falling through to the retry loop.
+                raise AlibiAPITimeoutError(
+                    f"API did not respond within {timeout:.0f}s: {exc}"
+                ) from exc
         raise AlibiAPIConnectionError(
             f"API unreachable after {_MAX_RETRIES} attempts: {last_exc}"
         )

@@ -746,6 +746,123 @@ def verify_items_llm(
     return corrections
 
 
+# JSON schema for the basket-recovery call: a bare item list, constrained so
+# the local model cannot emit malformed JSON.
+_RECOVERY_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "quantity": {"type": ["number", "null"]},
+                    "unit_raw": {"type": ["string", "null"]},
+                    "unit_price": {"type": ["number", "null"]},
+                    "total_price": {"type": ["number", "null"]},
+                },
+                "required": ["name", "total_price"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+
+def recover_line_items(extracted: dict[str, Any]) -> bool:
+    """Re-ask the LLM for the basket after verification emptied it.
+
+    ``verify_items`` can legitimately remove every extracted row (all of them
+    were column headers, VAT fragments, or bare numbers — the multi-line item
+    layout where a product's name and its "qty amount" sit on separate OCR
+    lines produces exactly that). A receipt whose OCR still shows amount lines
+    has real items, so silently persisting an itemless basket loses data: ask
+    once more with a prompt focused ONLY on line items.
+
+    Mutates ``extracted["line_items"]`` on success. Returns True when at least
+    one recovered item survived re-verification.
+    """
+    if extracted.get("line_items"):
+        return False  # basket not empty — nothing to recover
+
+    ocr_text = extracted.get("_ocr_text") or extracted.get("raw_text") or ""
+    if not ocr_text or count_amount_lines(ocr_text) < 1:
+        return False  # nothing item-like on the document — legitimately empty
+
+    from alibi.extraction.structurer import structure_ocr_text
+
+    receipt_total = extracted.get("total") or extracted.get("amount")
+    prompt = (
+        "Extract ONLY the purchased line items from this receipt OCR text.\n"
+        "A line item is a product/service with a price. A product's name and "
+        "its quantity/price often sit on SEPARATE lines — join them into one "
+        "item. Never return column headers (Name/Qty/Amount), VAT/tax lines, "
+        "totals, payment or loyalty lines as items.\n\n"
+        f"Receipt total: {receipt_total}\n\n"
+        f"--- OCR TEXT ---\n{ocr_text[:3000]}\n--- END ---\n\n"
+        'Return ONLY a JSON object: {"items": [{"name": "...", "quantity": N, '
+        '"unit_raw": "...", "unit_price": N, "total_price": N}]}\n'
+        "Use null for fields you cannot determine."
+    )
+
+    try:
+        result = structure_ocr_text(
+            raw_text=ocr_text,
+            doc_type="receipt",
+            emphasis_prompt=prompt,
+            timeout=90.0,
+            response_format=_RECOVERY_RESPONSE_FORMAT,
+        )
+    except Exception as e:
+        logger.warning("Basket recovery LLM call failed: %s", e)
+        return False
+
+    raw_items = result.get("items")
+    if not isinstance(raw_items, list):
+        return False
+
+    line_items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        total_price = _to_decimal(raw.get("total_price"))
+        if not name or total_price is None:
+            continue
+        line_items.append(
+            {
+                "name": name,
+                "quantity": raw.get("quantity") or 1,
+                "unit": "pcs",
+                "unit_raw": raw.get("unit_raw") or "",
+                "unit_price": raw.get("unit_price"),
+                "total_price": float(total_price),
+            }
+        )
+
+    if not line_items:
+        return False
+
+    # Re-verify the recovered basket so garbage cannot re-enter through this
+    # path; accept only if something survives.
+    candidate: dict[str, Any] = {
+        "line_items": line_items,
+        "total": extracted.get("total"),
+    }
+    verify_items(candidate)
+    if not candidate["line_items"]:
+        return False
+
+    extracted["line_items"] = candidate["line_items"]
+    logger.info(
+        "Basket recovery: restored %d line item(s) after verification "
+        "emptied the basket",
+        len(candidate["line_items"]),
+    )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Barcode-item cross-validation (product_cache lookup)
 # ---------------------------------------------------------------------------

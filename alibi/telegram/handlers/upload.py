@@ -31,6 +31,7 @@ from alibi.telegram.api_client import (
     AlibiAPIClient,
     AlibiAPIConnectionError,
     AlibiAPIError,
+    AlibiAPITimeoutError,
     ProcessResult,
 )
 from alibi.telegram.keystore import get_keystore
@@ -260,6 +261,16 @@ async def _process_attachment(
             "as soon as it's back."
         )
         return
+    except AlibiAPITimeoutError:
+        # The server has the document and is still working on it — do NOT
+        # spool or ask for a resend; both would create a duplicate.
+        logger.warning("Processing timed out waiting for reply: %s", filename)
+        await message.reply(
+            "This document is taking longer than usual, but it was received "
+            "and processing continues in the background. Please don't resend "
+            "it — the result will appear in the records shortly."
+        )
+        return
     except AlibiAPIError:
         logger.exception("API processing failed for %s", filename)
         await message.reply(
@@ -339,6 +350,14 @@ async def _process_media_group(buf: _MediaGroupBuffer) -> None:
         await buf.first_message.reply(
             "Saved — the service is starting up. I'll process this and reply "
             "as soon as it's back."
+        )
+        return
+    except AlibiAPITimeoutError:
+        logger.warning("Processing timed out waiting for reply (media group)")
+        await buf.first_message.reply(
+            "This document is taking longer than usual, but it was received "
+            "and processing continues in the background. Please don't resend "
+            "it — the result will appear in the records shortly."
         )
         return
     except AlibiAPIError:
@@ -756,6 +775,17 @@ async def drain_spool_once(bot) -> int:  # type: ignore[no-untyped-def]
         except AlibiAPIConnectionError:
             logger.info("Spool drain: API still unreachable, will retry later")
             break
+        except AlibiAPITimeoutError:
+            # The server received the replay and is still processing it.
+            # Keeping the entry would re-upload the same document next pass
+            # (a guaranteed duplicate), so clear it and let processing finish.
+            logger.warning(
+                "Spool drain: entry %s delivered but reply timed out; clearing",
+                entry.id,
+            )
+            spool.remove(entry.id)
+            processed += 1
+            continue
         except AlibiAPIError:
             logger.exception("Spooled entry %s failed permanently; dropping", entry.id)
             spool.remove(entry.id)

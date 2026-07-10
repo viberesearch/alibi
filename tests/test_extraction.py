@@ -115,6 +115,23 @@ That's all."""
         with pytest.raises(VisionExtractionError, match="Invalid JSON"):
             extract_json_from_response(response)
 
+    def test_extract_json_repairs_bare_word_values(self):
+        """Unquoted single-token values are quoted (mlx runner ignores the
+        Ollama format constraint, so local models emit these)."""
+        response = (
+            '```json\n{"items": [{"idx": 1, "state": null}, '
+            '{"idx": 2, "state": cured}, {"idx": 3, "state": roasted}]}\n```'
+        )
+        result = extract_json_from_response(response)
+        states = [i["state"] for i in result["items"]]
+        assert states == [None, "cured", "roasted"]
+
+    def test_extract_json_repair_preserves_literals_and_numbers(self):
+        """The bare-word repair must not touch true/false/null or numbers."""
+        response = '{"a": true, "b": null, "c": -1.5, "d": "x y", "e": 2.5e3}'
+        result = extract_json_from_response(response)
+        assert result == {"a": True, "b": None, "c": -1.5, "d": "x y", "e": 2500.0}
+
 
 class TestVisionExtraction:
     """Tests for vision extraction (mocked)."""

@@ -652,11 +652,13 @@ def find_yaml_in_store(
     source_path: Path,
     is_group: bool = False,
     *,
-    user_id: str = "system",
+    user_id: str | None = "system",
 ) -> Path | None:
     """Search the yaml_store for a YAML matching source_path stem.
 
-    Searches across all doc_type subdirectories under the user_id.
+    Searches across all doc_type subdirectories under the user_id, or across
+    the entire store when user_id is None (owner unknown, e.g. re-ingesting a
+    document that was uploaded under a real user rather than "system").
     Use when the doc_type is unknown (e.g., before extraction determines it).
 
     Returns the first match, or None.
@@ -665,11 +667,11 @@ def find_yaml_in_store(
     if store is None:
         return None
     stem = source_path.name if is_group else source_path.stem
-    user_dir = store / user_id
-    if not user_dir.exists():
+    search_root = store if user_id is None else store / user_id
+    if not search_root.exists():
         return None
     target = f"{stem}{YAML_SUFFIX}"
-    for match in user_dir.rglob(target):
+    for match in search_root.rglob(target):
         return match
     return None
 

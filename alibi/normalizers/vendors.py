@@ -171,7 +171,11 @@ _PAYMENT_INTERMEDIARY_RE = re.compile(
     r"|\bACQUIR(?:ING|ER)\b"
     r"|\bATM\b"
     r"|\bJ[CG]C\s+PAYMENT\b"
-    r"|\bP3T\b",
+    r"|\bP3T\b"
+    # Russian acquirer banks whose name headlines the card slip while the
+    # merchant sits on the line below — the slip must merge with the
+    # merchant's receipt (same amount/date), not stand as its own vendor.
+    r"|\bТ[-\s]?БАНК\b" r"|\bТИНЬКОФФ\b" r"|\bСБЕРБАНК\b",
     re.IGNORECASE,
 )
 

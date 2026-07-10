@@ -209,6 +209,15 @@ def _prepare_image(
         return image_path.read_bytes()
 
 
+# Unquoted single-token string in value position: `"state": cured,` — never
+# true/false/null (valid JSON) and never a number. Conservative on purpose:
+# only a bare word (letters/underscore start, no quotes/braces/commas inside)
+# directly followed by a value terminator is rewritten.
+_BARE_WORD_VALUE_RE = re.compile(
+    r"(:\s*)(?!true\b|false\b|null\b)([A-Za-zА-Яа-яЁё_][\w.\-]*)(\s*[,}\]])"
+)
+
+
 def extract_json_from_response(response_text: str) -> dict[str, Any]:
     """Extract JSON from LLM response text.
 
@@ -237,6 +246,15 @@ def extract_json_from_response(response_text: str) -> dict[str, Any]:
         )
         try:
             return cast(dict[str, Any], json.loads(cleaned))
+        except json.JSONDecodeError:
+            pass
+        # Last resort: quote bare-word values ("state": cured -> "state":
+        # "cured"). Local models emit these when Ollama's format constraint is
+        # not enforced — observed with the mlx runner, which silently ignores
+        # the "format" field that the GGUF runner honours.
+        repaired = _BARE_WORD_VALUE_RE.sub(r'\1"\2"\3', cleaned)
+        try:
+            return cast(dict[str, Any], json.loads(repaired))
         except json.JSONDecodeError as e2:
             raise VisionExtractionError(f"Invalid JSON in response: {e2}") from e2
 
@@ -844,14 +862,25 @@ def _maybe_escalate_to_cloud(
         or any("amount line" in w.lower() for w in cv.warnings)
     )
     low_conf = verification.confidence < config.escalation_confidence_threshold
-    if not (low_conf or coverage_drop):
+    # A receipt with NEITHER a total NOR a date is unusable downstream (no
+    # reconciliation, no FX, no dedup window) — a strong garbage-extraction
+    # signal even when the confidence score itself sits above the threshold
+    # (observed: hallucinated OCR scored 0.62 against a 0.6 threshold). Missing
+    # total also disables the coverage check (nothing to reconcile against),
+    # so it cannot catch this case either.
+    critical_gaps = not (extracted.get("total") or extracted.get("amount")) and not (
+        extracted.get("date") or extracted.get("document_date")
+    )
+    if not (low_conf or coverage_drop or critical_gaps):
         return extracted
 
     logger.info(
-        "Cloud escalation for %s (confidence=%.2f, coverage_drop=%s)",
+        "Cloud escalation for %s (confidence=%.2f, coverage_drop=%s, "
+        "critical_gaps=%s)",
         image_path.name,
         verification.confidence,
         coverage_drop,
+        critical_gaps,
     )
     try:
         from alibi.extraction.gemini_structurer import extract_from_image_gemini

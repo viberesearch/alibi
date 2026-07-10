@@ -332,3 +332,86 @@ async def test_drain_reply_falls_back_when_original_gone(tmp_spool: Spool, monke
 
     assert bot.send_message.await_count == 2
     assert tmp_spool.pending_count() == 0
+
+
+# --- Timeout handling (server has the doc; never spool / never resend) ------
+
+
+@pytest.mark.asyncio
+async def test_timeout_does_not_spool_and_says_dont_resend(
+    tmp_spool: Spool, monkeypatch
+):
+    from alibi.telegram.api_client import AlibiAPITimeoutError
+
+    client = MagicMock()
+    client.process_document = AsyncMock(side_effect=AlibiAPITimeoutError("420s"))
+    monkeypatch.setattr(upload, "_client", client)
+
+    msg = _make_message()
+    await upload._process_attachment(msg, b"imgbytes", "r.jpg", None, None)
+
+    # Spooling would replay the upload against a server that already has it.
+    assert tmp_spool.pending_count() == 0
+    reply = msg.reply.await_args.args[0].lower()
+    assert "resend" in reply
+    assert "error" not in reply
+
+
+@pytest.mark.asyncio
+async def test_drain_timeout_clears_entry_without_failure_notice(
+    tmp_spool: Spool, monkeypatch
+):
+    from alibi.telegram.api_client import AlibiAPITimeoutError
+
+    tmp_spool.add(
+        [(b"x", "a.jpg")],
+        kind="single",
+        api_key=None,
+        doc_type=None,
+        vendor_hint=None,
+        chat_id=1,
+        reply_to_message_id=None,
+    )
+    client = MagicMock()
+    client.process_document = AsyncMock(side_effect=AlibiAPITimeoutError("420s"))
+    monkeypatch.setattr(upload, "_client", client)
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    cleared = await upload.drain_spool_once(bot)
+
+    # Entry cleared (replaying would duplicate), user NOT told it failed.
+    assert cleared == 1
+    assert tmp_spool.pending_count() == 0
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_read_timeout_raises_timeout_error(monkeypatch):
+    """A read timeout after delivery maps to AlibiAPITimeoutError, no retries."""
+    import httpx
+
+    from alibi.telegram.api_client import AlibiAPIClient, AlibiAPITimeoutError
+
+    calls = itertools.count()
+
+    class _FakeAsyncClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, *a, **kw):
+            next(calls)
+            raise httpx.ReadTimeout("read timed out")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    client = AlibiAPIClient(base_url="http://test")
+    with pytest.raises(AlibiAPITimeoutError):
+        await client._request("POST", "/x", api_key=None, timeout=1.0)
+    assert next(calls) == 1  # no retry loop for delivered-but-slow requests

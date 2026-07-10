@@ -3729,3 +3729,88 @@ class TestHeaderLinesTag:
         # Both should find the vendor
         assert result_with_hints.data.get("vendor") == "Real Shop"
         assert result_no_hints.data.get("vendor") == "Real Shop"
+
+
+class TestGenericTitleVendor:
+    """Generic document headings must never survive as vendor names."""
+
+    def test_kassovy_chek_dropped_without_legal_name(self):
+        from alibi.extraction.text_parser import _swap_generic_title_vendor
+
+        data = {"vendor": "Кассовый чек", "vendor_legal_name": ""}
+        _swap_generic_title_vendor(data)
+        assert data["vendor"] == ""
+
+    def test_title_replaced_by_legal_name(self):
+        from alibi.extraction.text_parser import _swap_generic_title_vendor
+
+        data = {"vendor": "Кассовый чек", "vendor_legal_name": 'АО "Вкусвилл"'}
+        _swap_generic_title_vendor(data)
+        assert data["vendor"] == 'АО "Вкусвилл"'
+
+    def test_exact_single_word_titles_dropped(self):
+        from alibi.extraction.text_parser import _swap_generic_title_vendor
+
+        for title in ("RECEIPT", "Invoice", "Чек"):
+            data = {"vendor": title}
+            _swap_generic_title_vendor(data)
+            assert data["vendor"] == "", title
+
+    def test_real_vendor_containing_title_word_kept(self):
+        from alibi.extraction.text_parser import _swap_generic_title_vendor
+
+        # Single-word titles match exact-only; a real name is untouched.
+        data = {"vendor": "Ticket to the Moon Ltd"}
+        _swap_generic_title_vendor(data)
+        assert data["vendor"] == "Ticket to the Moon Ltd"
+
+    def test_noise_line_rejects_generic_titles(self):
+        from alibi.extraction.text_parser import _is_noise_line
+
+        assert _is_noise_line("Кассовый чек")
+        assert _is_noise_line("RECEIPT")
+        assert not _is_noise_line("ВкусВилл Арбат")
+
+
+class TestDecorationVendor:
+    """Asterisk/separator rows can never survive as vendor names."""
+
+    def test_asterisk_vendor_dropped(self):
+        from alibi.extraction.text_parser import _swap_generic_title_vendor
+
+        data = {"vendor": "*" * 62, "vendor_legal_name": ""}
+        _swap_generic_title_vendor(data)
+        assert data["vendor"] == ""
+
+    def test_asterisk_vendor_replaced_by_legal_name(self):
+        from alibi.extraction.text_parser import _swap_generic_title_vendor
+
+        data = {"vendor": "****", "vendor_legal_name": 'ООО "Рэд Хот Пицца"'}
+        _swap_generic_title_vendor(data)
+        assert data["vendor"] == 'ООО "Рэд Хот Пицца"'
+
+    def test_noise_line_rejects_decorations(self):
+        from alibi.extraction.text_parser import _is_noise_line
+
+        assert _is_noise_line("*" * 30)
+        assert _is_noise_line("=-=-=-=-=")
+        assert not _is_noise_line("Рэд Хот Пицца")
+
+
+class TestRussianAcquirerIntermediary:
+    """Russian acquirer bank headers are intermediaries, not merchants."""
+
+    def test_bank_headers_detected(self):
+        from alibi.normalizers.vendors import is_payment_intermediary
+
+        assert is_payment_intermediary("Т-БАНК")
+        assert is_payment_intermediary("т-банк")
+        assert is_payment_intermediary("ПАО СБЕРБАНК")
+        assert is_payment_intermediary("ТИНЬКОФФ")
+
+    def test_merchants_not_detected(self):
+        from alibi.normalizers.vendors import is_payment_intermediary
+
+        assert not is_payment_intermediary('Бистро "Анна"')
+        assert not is_payment_intermediary("СберМаркет")
+        assert not is_payment_intermediary("Кофемания Тверская")

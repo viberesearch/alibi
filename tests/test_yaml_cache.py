@@ -618,3 +618,23 @@ class TestPipelineIntegration:
         assert result.success
         assert result.extracted_data is not None
         assert result.extracted_data["vendor"] == "LLM Vendor"
+
+
+class TestFindYamlAcrossUsers:
+    """find_yaml_in_store(user_id=None) searches every user's directory."""
+
+    def test_finds_yaml_under_real_user(self, tmp_path, monkeypatch):
+        import alibi.extraction.yaml_cache as yc
+
+        store = tmp_path / "yaml_store"
+        user_dir = store / "1f2e3d4c-user" / "receipt"
+        user_dir.mkdir(parents=True)
+        yaml_file = user_dir / "photo.alibi.yaml"
+        yaml_file.write_text("_meta:\n  version: 5\n")
+
+        monkeypatch.setattr(yc, "_get_yaml_store_root", lambda: store)
+
+        source = tmp_path / "photo.jpg"
+        # Default (system) scope does not see it; store-wide scope does.
+        assert yc.find_yaml_in_store(source) is None
+        assert yc.find_yaml_in_store(source, user_id=None) == yaml_file
