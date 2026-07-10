@@ -3807,6 +3807,12 @@ class TestRussianAcquirerIntermediary:
         assert is_payment_intermediary("т-банк")
         assert is_payment_intermediary("ПАО СБЕРБАНК")
         assert is_payment_intermediary("ТИНЬКОФФ")
+        assert is_payment_intermediary("Альфа Банк")
+        assert is_payment_intermediary("АЛЬФА-БАНК")
+        assert is_payment_intermediary("ВТБ")
+        assert is_payment_intermediary("Газпромбанк")
+        assert is_payment_intermediary("Райффайзенбанк")
+        assert is_payment_intermediary("Росбанк")
 
     def test_merchants_not_detected(self):
         from alibi.normalizers.vendors import is_payment_intermediary
@@ -3814,3 +3820,5 @@ class TestRussianAcquirerIntermediary:
         assert not is_payment_intermediary('Бистро "Анна"')
         assert not is_payment_intermediary("СберМаркет")
         assert not is_payment_intermediary("Кофемания Тверская")
+        assert not is_payment_intermediary("Альфатрейд")
+        assert not is_payment_intermediary("Чайхона №1")
