@@ -605,7 +605,8 @@ def enrich_apply_coherence_fixes(findings_file: str) -> None:
             parts.append(f"category_path -> {f.suggested_category_path!r}")
         console.print(f"  [cyan]{f.name}[/cyan]: {', '.join(parts)}")
     console.print(
-        f"[green]Applied {len(result.applied)} fix(es); "
+        f"[green]Applied {len(result.applied)} fix(es), propagated to "
+        f"{result.propagated_rows} same-name sibling row(s); "
         f"rebuilt item_stars: {result.rebuilt_stars} rows.[/green]"
     )
 

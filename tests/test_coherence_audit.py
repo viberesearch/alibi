@@ -112,6 +112,24 @@ def _llm_answer(entries: list[dict[str, Any]]):
     return _fake
 
 
+def _llm_flag_by_name(name_fragment: str, entry_fields: dict[str, Any]):
+    """Stub that flags the prompt line containing ``name_fragment``.
+
+    Batch order follows random item UUIDs, so a hardcoded idx is flaky —
+    resolve the idx from the rendered prompt instead.
+    """
+    import re
+
+    def _fake(prompt: str, **kwargs: Any) -> list[Any]:
+        for line in prompt.splitlines():
+            m = re.match(r"(\d+)\. ", line)
+            if m and name_fragment in line:
+                return [{"idx": int(m.group(1)), **entry_fields}]
+        raise AssertionError(f"{name_fragment!r} not found in prompt")
+
+    return _fake
+
+
 # ---------------------------------------------------------------------------
 # audit_coherence
 # ---------------------------------------------------------------------------
@@ -123,19 +141,18 @@ def test_audit_flags_incoherent_item(db: DatabaseManager) -> None:
     )
     _seed_item(db, "Cassius Tea 500мл", "tea", "food > beverages > water")
 
-    entries = [
+    stub = _llm_flag_by_name(
+        "Lauretana",
         {
-            "idx": 1,
             "coherent": False,
             "reason": "Lauretana is mineral water, not wine",
             "suggested_comparable_name": "mineral water",
             "suggested_category_path": "food > beverages > water",
         },
-        {"idx": 2, "coherent": True},
-    ]
+    )
     with patch(
         "alibi.enrichment.coherence_audit.call_enrichment_llm",
-        side_effect=_llm_answer(entries),
+        side_effect=stub,
     ):
         findings = audit_coherence(db)
 
@@ -297,3 +314,53 @@ def test_apply_skips_missing_item_and_empty_suggestions(db: DatabaseManager) -> 
     result = apply_coherence_fixes(db, [gone, no_suggestion])
     assert result.applied == []
     assert result.rebuilt_stars == 0
+
+
+def test_apply_propagates_to_same_name_siblings(db: DatabaseManager) -> None:
+    """A fix applies to every same-name row, except user_confirmed ones."""
+    target = _seed_item(db, "MPANANES IMPORTED PER", "mushrooms", "food > produce")
+    sibling = _seed_item(db, "MPANANES IMPORTED PER", "mushrooms", "food > produce")
+    confirmed = _seed_item(
+        db,
+        "MPANANES IMPORTED PER",
+        "plantains",
+        "food > produce > fruit",
+        enrichment_source="user_confirmed",
+    )
+    other = _seed_item(db, "TOMATOES PER KILO", "mushrooms", "food > produce")
+
+    finding = CoherenceFinding(
+        item_id=target,
+        name="MPANANES IMPORTED PER",
+        vendor="Test Vendor",
+        comparable_name="mushrooms",
+        category_path="food > produce",
+        suggested_comparable_name="bananas",
+        suggested_category_path="food > produce > fruit",
+        reason="bananas, not mushrooms",
+        approved=True,
+    )
+    result = apply_coherence_fixes(db, [finding])
+
+    assert len(result.applied) == 1
+    assert result.propagated_rows == 1
+
+    conn = db.get_connection()
+
+    def row(item_id: str):
+        return conn.execute(
+            "SELECT comparable_name, category_path, enrichment_source "
+            "FROM fact_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+
+    for iid in (target, sibling):
+        r = row(iid)
+        assert r["comparable_name"] == "bananas"
+        assert r["category_path"] == "food > produce > fruit"
+        assert r["enrichment_source"] == "user_confirmed"
+
+    # Human-confirmed sibling untouched
+    assert row(confirmed)["comparable_name"] == "plantains"
+    # Different name untouched
+    assert row(other)["comparable_name"] == "mushrooms"

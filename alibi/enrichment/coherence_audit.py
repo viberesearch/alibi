@@ -115,6 +115,7 @@ class ApplyCoherenceResult:
     """Outcome of applying approved coherence fixes."""
 
     applied: list[CoherenceFinding] = field(default_factory=list)
+    propagated_rows: int = 0
     rebuilt_stars: int = 0
 
 
@@ -305,6 +306,13 @@ def apply_coherence_fixes(
     Each approved finding updates only the suggested fields that are set,
     and stamps the row ``user_confirmed`` so future enrichment passes and
     audits skip it. Findings whose item no longer exists are skipped.
+
+    Each fix is then PROPAGATED to sibling rows — fact_items with the exact
+    same name on other receipts. The audit flags one instance per name, so
+    without propagation the same product would keep the stale value
+    everywhere else (observed live: two extra "MPANANES IMPORTED PER" rows
+    still said "mushrooms" after their twin was fixed to bananas). Rows
+    already user_confirmed are never overwritten.
     """
     from alibi.services.item_stars import rebuild_item_stars
 
@@ -318,21 +326,37 @@ def apply_coherence_fixes(
             "enrichment_confidence = 1.0",
         ]
         params: list[Any] = []
+        diff_conds: list[str] = []
+        diff_params: list[Any] = []
         if f.suggested_comparable_name is not None:
             sets.append("comparable_name = ?")
             params.append(f.suggested_comparable_name)
+            diff_conds.append("COALESCE(comparable_name, '') != ?")
+            diff_params.append(f.suggested_comparable_name)
         if f.suggested_category_path is not None:
             sets.append("category_path = ?")
             params.append(f.suggested_category_path)
-        params.append(f.item_id)
+            diff_conds.append("COALESCE(category_path, '') != ?")
+            diff_params.append(f.suggested_category_path)
+        set_clause = ", ".join(sets)
         cur = conn.execute(
-            f"UPDATE fact_items SET {', '.join(sets)} WHERE id = ?",  # nosec B608
-            params,
+            f"UPDATE fact_items SET {set_clause} WHERE id = ?",  # nosec B608
+            params + [f.item_id],
         )
-        if cur.rowcount:
-            result.applied.append(f)
-        else:
+        if not cur.rowcount:
             logger.warning("Coherence fix skipped, item gone: %s", f.item_id[:8])
+            continue
+        result.applied.append(f)
+        # Propagate to same-name siblings that still differ.
+        sib = conn.execute(
+            f"UPDATE fact_items SET {set_clause} "  # nosec B608
+            "WHERE name = ? AND id != ? "
+            "  AND (enrichment_source IS NULL "
+            "       OR enrichment_source != 'user_confirmed') "
+            f"  AND ({' OR '.join(diff_conds)})",
+            params + [f.name, f.item_id] + diff_params,
+        )
+        result.propagated_rows += sib.rowcount
     conn.commit()
     if result.applied:
         result.rebuilt_stars = rebuild_item_stars(db)
