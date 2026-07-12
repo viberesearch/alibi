@@ -675,7 +675,7 @@ def maintain_fix_quality(dry_run: bool) -> None:
     if dry_run:
         console.print("[bold]Dry run -- previewing fixes...[/bold]\n")
 
-    report_result = fix_data_quality(db_manager)
+    report_result = fix_data_quality(db_manager, dry_run=dry_run)
 
     if report_result.total:
         console.print(f"  Units fixed (pcs->kg): {report_result.units_fixed}")
@@ -686,9 +686,8 @@ def maintain_fix_quality(dry_run: bool) -> None:
             console.print("\n[bold]Details:[/bold]")
             for detail in report_result.details:
                 console.print(f"  {detail}")
-        console.print(
-            f"\n[green]Data quality: {report_result.total} fixes applied.[/green]"
-        )
+        verb = "would be applied (dry run)" if dry_run else "fixes applied"
+        console.print(f"\n[green]Data quality: {report_result.total} {verb}.[/green]")
     else:
         console.print("[dim]No data quality issues found.[/dim]")
 

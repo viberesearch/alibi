@@ -354,7 +354,9 @@ def remove_orphaned_members(db: DatabaseManager) -> int:
     return count
 
 
-def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
+def fix_weighed_item_units(
+    db: DatabaseManager, *, dry_run: bool = False
+) -> DataQualityReport:
     """Fix weighed items with incorrect unit or missing unit_quantity.
 
     Detects and fixes two patterns:
@@ -365,6 +367,7 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
        and unit_price allow backfill: unit_quantity = total_price / unit_price.
 
     All changes are recorded as correction events via update_fact_item().
+    With ``dry_run=True`` candidates are reported but nothing is written.
 
     Returns:
         DataQualityReport with counts and details.
@@ -392,7 +395,7 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
     for row in pcs_weighed:
         item_id = row["id"]
         try:
-            ok = update_fact_item(db, item_id, {"unit": "kg"})
+            ok = dry_run or update_fact_item(db, item_id, {"unit": "kg"})
             if ok:
                 report.units_fixed += 1
                 assert report.details is not None
@@ -424,7 +427,9 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
         if computed_uq <= 0 or computed_uq > 50:  # sanity bounds
             continue
         try:
-            ok = update_fact_item(db, item_id, {"unit_quantity": computed_uq})
+            ok = dry_run or update_fact_item(
+                db, item_id, {"unit_quantity": computed_uq}
+            )
             if ok:
                 report.unit_quantities_backfilled += 1
                 assert report.details is not None
@@ -446,7 +451,9 @@ def fix_weighed_item_units(db: DatabaseManager) -> DataQualityReport:
     return report
 
 
-def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
+def fix_packaged_item_pricing(
+    db: DatabaseManager, *, dry_run: bool = False
+) -> DataQualityReport:
     """Convert packaged-by-weight items from per-package to per-kg pricing.
 
     Detects items with unit='g' that have per-package pricing
@@ -457,6 +464,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
 
     Also fixes items already converted to unit='kg' (e.g. via TablePlus)
     where unit_price still reflects per-package pricing.
+    With ``dry_run=True`` candidates are reported but nothing is written.
 
     Returns:
         DataQualityReport with counts and details.
@@ -487,7 +495,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
             continue
         per_kg_price = round(float(row["unit_price"]) / uq_kg, 2)
         try:
-            ok = update_fact_item(
+            ok = dry_run or update_fact_item(
                 db,
                 item_id,
                 {
@@ -531,7 +539,7 @@ def fix_packaged_item_pricing(db: DatabaseManager) -> DataQualityReport:
         if abs(current_check - expected) / expected < 0.05:
             continue
         try:
-            ok = update_fact_item(db, item_id, {"unit_price": per_kg_price})
+            ok = dry_run or update_fact_item(db, item_id, {"unit_price": per_kg_price})
             if ok:
                 report.unit_quantities_backfilled += 1
                 assert report.details is not None

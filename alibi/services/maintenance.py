@@ -58,16 +58,20 @@ def fill_category_gaps(db: DatabaseManager) -> DataQualityReport:
     return _fill_brand_category_gaps(db)
 
 
-def fix_data_quality(db: DatabaseManager) -> DataQualityReport:
+def fix_data_quality(
+    db: DatabaseManager, *, dry_run: bool = False
+) -> DataQualityReport:
     """Fix known data quality issues in fact_items.
 
     Currently fixes:
     - Weighed items with wrong unit (pcs -> kg)
     - Weighed items with missing unit_quantity (backfill from prices)
     - Packaged items: g -> kg conversion with per-kg unit_price
+
+    With ``dry_run=True`` the report is computed but nothing is written.
     """
-    r1 = fix_weighed_item_units(db)
-    r2 = fix_packaged_item_pricing(db)
+    r1 = fix_weighed_item_units(db, dry_run=dry_run)
+    r2 = fix_packaged_item_pricing(db, dry_run=dry_run)
     combined = DataQualityReport(
         units_fixed=r1.units_fixed + r2.units_fixed,
         unit_quantities_backfilled=(

@@ -479,6 +479,137 @@ def enrich_apply_name_merges(proposal_file: str) -> None:
     console.print(f"[dim]Apply log -> {log_path}[/dim]")
 
 
+@enrich.command("audit-coherence")
+@click.option(
+    "--limit",
+    "-l",
+    default=200,
+    show_default=True,
+    help="Max items to audit",
+)
+@click.option("--vendor", "-v", default=None, help="Restrict to one vendor")
+@click.option(
+    "--output",
+    "-o",
+    default="data/_coherence_audit_findings.yaml",
+    show_default=True,
+    help="Where to write the review file.",
+)
+def enrich_audit_coherence(limit: int, vendor: str | None, output: str) -> None:
+    """Audit enriched items for semantic coherence (human-review-gated).
+
+    The local LLM judges whether each item's comparable_name and
+    category_path actually fit the item name — catching enrichment
+    hallucinations (mineral water classified as wine, a drink labelled
+    cheese) that deterministic checks cannot. Rows already marked
+    user_confirmed are skipped, suggested categories are constrained to
+    paths already present in the DB, and NO data is changed: findings go
+    to a review file. Set ``approved: true`` on the ones you accept, then
+    run ``lt enrich apply-coherence-fixes --file <output>``.
+    """
+    import datetime
+    from pathlib import Path
+
+    from alibi.enrichment.coherence_audit import (
+        audit_coherence,
+        write_findings_yaml,
+    )
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(f"[dim]Auditing up to {limit} enriched item(s)...[/dim]")
+    findings = audit_coherence(db, limit=limit, vendor=vendor)
+    if not findings:
+        console.print("[dim]No coherence problems found.[/dim]")
+        return
+
+    out_path = Path(output)
+    write_findings_yaml(
+        findings,
+        out_path,
+        generated=datetime.date.today().isoformat(),
+    )
+    for f in findings[:25]:
+        console.print(
+            f"  [cyan]{f.name}[/cyan] [dim]({f.vendor})[/dim] — "
+            f"[yellow]{f.reason or 'incoherent'}[/yellow]"
+        )
+    if len(findings) > 25:
+        console.print(f"  [dim]... and {len(findings) - 25} more[/dim]")
+    console.print(f"[green]{len(findings)} finding(s) written.[/green]")
+    console.print(
+        f"[bold]Review[/bold] {out_path} (set [cyan]approved: true[/cyan]), then "
+        f"run [bold]lt enrich apply-coherence-fixes --file {out_path}[/bold]."
+    )
+
+
+@enrich.command("apply-coherence-fixes")
+@click.option(
+    "--file",
+    "-f",
+    "findings_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="The reviewed findings file (entries marked approved: true).",
+)
+def enrich_apply_coherence_fixes(findings_file: str) -> None:
+    """Apply approved coherence fixes from a reviewed findings file.
+
+    Applies ONLY findings marked ``approved: true``: updates the suggested
+    comparable_name/category_path, stamps the rows user_confirmed so later
+    passes leave them alone, and rebuilds item_stars. A DB backup is taken
+    before any write.
+    """
+    import shutil
+    from pathlib import Path
+
+    from alibi.enrichment.coherence_audit import (
+        apply_coherence_fixes,
+        load_approved_findings,
+    )
+
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    try:
+        findings = load_approved_findings(Path(findings_file))
+    except ValueError as exc:
+        console.print(f"[red]Malformed findings file: {exc}[/red]")
+        return
+
+    if not findings:
+        console.print(
+            "[yellow]No approved findings (set [cyan]approved: true[/cyan] on "
+            "the ones you want).[/yellow]"
+        )
+        return
+
+    cfg = get_config()
+    db_path = cfg.get_absolute_db_path()
+    backup = db_path.with_suffix(db_path.suffix + ".bak_precoherence")
+    shutil.copy2(db_path, backup)
+    console.print(f"[dim]Backed up DB -> {backup}[/dim]")
+
+    result = apply_coherence_fixes(db, findings)
+
+    for f in result.applied:
+        parts = []
+        if f.suggested_comparable_name is not None:
+            parts.append(f"comparable_name -> {f.suggested_comparable_name!r}")
+        if f.suggested_category_path is not None:
+            parts.append(f"category_path -> {f.suggested_category_path!r}")
+        console.print(f"  [cyan]{f.name}[/cyan]: {', '.join(parts)}")
+    console.print(
+        f"[green]Applied {len(result.applied)} fix(es); "
+        f"rebuilt item_stars: {result.rebuilt_stars} rows.[/green]"
+    )
+
+
 @enrich.command("comparable-prices")
 @click.option(
     "--limit",

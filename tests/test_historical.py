@@ -676,6 +676,56 @@ class TestApplyHistoricalCorrections:
         if result.products_matched > 0:
             assert extracted["line_items"][0]["name"] == "organic bananas"
 
+    def test_preserve_item_names_skips_product_rewrites(
+        self, db: DatabaseManager
+    ) -> None:
+        """Hand-edited YAML names must survive re-ingestion.
+
+        History holds a polluted spelling; the human fixed it in the YAML.
+        With preserve_item_names=True the fix must NOT be reverted to the
+        historical spelling, while vendor-level enrichment still runs.
+        """
+        _seed_vendor(
+            db,
+            "Fresko Store",
+            phone="+357-123-456",
+            items=[{"name": "Finnik with butter", "quantity": 2, "total_price": 5.0}],
+        )
+
+        extracted: dict[str, Any] = {
+            "vendor": "Fresko Store",
+            "line_items": [
+                {"name": "Finik with butter", "total_price": 5.0},
+            ],
+        }
+
+        result = apply_historical_corrections(db, extracted, preserve_item_names=True)
+
+        assert extracted["line_items"][0]["name"] == "Finik with butter"
+        assert result.products_matched == 0
+        assert not any(c.field.startswith("line_items") for c in result.corrections)
+        # Vendor detail enrichment is unaffected by the flag
+        assert extracted.get("vendor_phone") == "+357-123-456"
+
+    def test_default_still_rewrites_from_history(self, db: DatabaseManager) -> None:
+        """Without the flag the historical consistency pass still applies."""
+        _seed_vendor(
+            db,
+            "Fresko Store",
+            items=[{"name": "Finnik with butter", "quantity": 2, "total_price": 5.0}],
+        )
+
+        extracted: dict[str, Any] = {
+            "vendor": "Fresko Store",
+            "line_items": [
+                {"name": "Finik with butter", "total_price": 5.0},
+            ],
+        }
+
+        result = apply_historical_corrections(db, extracted)
+        if result.products_matched > 0:
+            assert extracted["line_items"][0]["name"] == "finnik with butter"
+
 
 # ---------------------------------------------------------------------------
 # vendor_key storage and retrieval

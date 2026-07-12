@@ -1046,18 +1046,23 @@ class ProcessingPipeline:
         folder_context: FolderContext | None = None,
         is_group: bool = False,
         yaml_path: str | None = None,
+        preserve_item_names: bool = False,
     ) -> ProcessingResult:
         """Phase B: ingest extracted data into DB from YAML.
 
         Applies historical corrections (without rewriting YAML), refines,
         canonicalizes vendor, runs v2 pipeline. Shared by fresh ingest
-        and corrections.
+        and corrections. Pass ``preserve_item_names=True`` on the correction
+        paths (hand-edited YAML) so historical name passes cannot revert the
+        human's item-name fixes.
         """
         # 1. Historical verification (cross-reference against DB)
         # NOTE: do NOT rewrite YAML — admin edits are preserved
         if extracted_data:
             try:
-                hist_result = apply_historical_corrections(db, extracted_data)
+                hist_result = apply_historical_corrections(
+                    db, extracted_data, preserve_item_names=preserve_item_names
+                )
                 if hist_result.applied_count > 0:
                     logger.info(
                         f"Historical verification for {file_path.name}: "
@@ -1486,7 +1491,9 @@ class ProcessingPipeline:
                 cleanup_result = v2_store.cleanup_document(db, existing_doc["id"])
                 saved_annotations = cleanup_result.get("saved_annotations", [])
 
-            # 5. Phase B: ingest from YAML
+            # 5. Phase B: ingest from YAML. A surviving existing_doc means the
+            # on-disk YAML hash diverged from the stored one — a hand edit —
+            # so its item names are authoritative.
             result = self._ingest_from_yaml(
                 db,
                 file_path,
@@ -1496,6 +1503,7 @@ class ProcessingPipeline:
                 doc_type,
                 folder_context=folder_context,
                 yaml_path=_yaml_path,
+                preserve_item_names=existing_doc is not None,
             )
 
             # 6. Migrate annotations from old fact to new
@@ -2245,6 +2253,7 @@ class ProcessingPipeline:
             folder_context=reingest_context,
             is_group=is_group,
             yaml_path=existing_doc.get("yaml_path") if existing_doc else None,
+            preserve_item_names=True,
         )
 
         # Migrate annotations from old fact to new

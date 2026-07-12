@@ -304,3 +304,36 @@ def test_skip_ambiguous_kg(db: DatabaseManager) -> None:
         "SELECT unit_quantity FROM fact_items WHERE id = ?", (item_id,)
     ).fetchone()
     assert row["unit_quantity"] is None
+
+
+def test_dry_run_reports_without_writing(db: DatabaseManager) -> None:
+    """dry_run=True must report candidates but leave the rows untouched."""
+    cloud_id = _make_cloud(db)
+    fact_id = _make_fact(db, cloud_id)
+    item_id = _make_fact_item(
+        db,
+        fact_id,
+        name="Chicken Breast",
+        unit="pcs",
+        unit_quantity=0.25,
+        unit_price=20.0,
+        total_price=5.0,
+    )
+
+    report = fix_weighed_item_units(db, dry_run=True)
+
+    assert report.units_fixed == 1
+
+    conn = db.get_connection()
+    row = conn.execute(
+        "SELECT unit FROM fact_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    assert row["unit"] == "pcs"
+
+    # A real run afterwards still finds and applies the same fix
+    report = fix_weighed_item_units(db)
+    assert report.units_fixed == 1
+    row = conn.execute(
+        "SELECT unit FROM fact_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    assert row["unit"] == "kg"

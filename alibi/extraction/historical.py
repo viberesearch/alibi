@@ -377,11 +377,20 @@ def backfill_vendor_key(
 def apply_historical_corrections(
     db: DatabaseManager,
     extracted: dict[str, Any],
+    *,
+    preserve_item_names: bool = False,
 ) -> HistoricalResult:
     """Run all historical checks and apply corrections to the extraction.
 
     Modifies extracted dict in-place with corrections. Returns a result
     describing what was found and changed.
+
+    When ``preserve_item_names`` is True (re-ingestion from a hand-edited
+    .alibi.yaml), line-item names are taken as authoritative and neither the
+    vendor-history consistency pass nor the identity spell-correction pass may
+    rewrite them — otherwise a human fix is silently reverted to the polluted
+    historical spelling it was meant to repair. Vendor identity, vendor
+    details, and the identity feedback still run.
 
     Correction priority:
     1. Vendor identity via registration ID (highest confidence)
@@ -454,8 +463,11 @@ def apply_historical_corrections(
 
     # Check product name consistency
     line_items = extracted.get("line_items") or []
-    product_corrections = check_product_names(db, extracted, vendor_name)
     result.products_total = len(line_items)
+    if preserve_item_names:
+        product_corrections = []
+    else:
+        product_corrections = check_product_names(db, extracted, vendor_name)
     products_matched = 0
 
     for correction in product_corrections:
@@ -476,30 +488,31 @@ def apply_historical_corrections(
     result.corrections.extend(product_corrections)
 
     # OCR spell correction for item names via identity + product_cache
-    for i, item in enumerate(line_items):
-        item_name = (item.get("name") or "").strip()
-        if not item_name or len(item_name) < 3:
-            continue
+    if not preserve_item_names:
+        for i, item in enumerate(line_items):
+            item_name = (item.get("name") or "").strip()
+            if not item_name or len(item_name) < 3:
+                continue
 
-        from alibi.identities.matching import suggest_item_correction
+            from alibi.identities.matching import suggest_item_correction
 
-        corrected = suggest_item_correction(db, item_name)
-        if corrected and corrected != item_name:
-            line_items[i]["name"] = corrected
-            result.corrections.append(
-                HistoricalCorrection(
-                    field=f"line_items[{i}].name",
-                    original=item_name,
-                    suggested=corrected,
-                    reason="item_name_correction",
-                    confidence=0.82,
+            corrected = suggest_item_correction(db, item_name)
+            if corrected and corrected != item_name:
+                line_items[i]["name"] = corrected
+                result.corrections.append(
+                    HistoricalCorrection(
+                        field=f"line_items[{i}].name",
+                        original=item_name,
+                        suggested=corrected,
+                        reason="item_name_correction",
+                        confidence=0.82,
+                    )
                 )
-            )
-            logger.info(
-                "Historical: item name corrected '%s' → '%s'",
-                item_name,
-                corrected,
-            )
+                logger.info(
+                    "Historical: item name corrected '%s' → '%s'",
+                    item_name,
+                    corrected,
+                )
 
     # Feed discoveries back to identity system
     try:
