@@ -176,7 +176,7 @@ async def run_refine_enrichment(
     with the local LLM assignment.
 
     Requires ALIBI_ANTHROPIC_API_KEY. Uses the configured
-    cloud_enrichment_model (default: claude-sonnet-4-6).
+    cloud_enrichment_model (default: claude-sonnet-5).
     """
     from alibi.enrichment.cloud_enrichment import refine_categories_by_cloud
 
