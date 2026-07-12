@@ -158,7 +158,7 @@ class Config(BaseSettings):
     # Cloud enrichment (Anthropic API)
     cloud_enrichment_enabled: bool = Field(default=False)
     anthropic_api_key: Optional[str] = Field(default=None)
-    cloud_enrichment_model: str = Field(default="claude-sonnet-4-6")
+    cloud_enrichment_model: str = Field(default="claude-sonnet-5")
     llm_enrichment_timeout: float = Field(default=60.0)
 
     # MindsDB predictors

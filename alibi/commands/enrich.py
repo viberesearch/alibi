@@ -971,7 +971,7 @@ def enrich_refine(limit: int) -> None:
     verification. Only corrects categories where the cloud model
     disagrees with the local LLM assignment.
 
-    Uses the configured cloud_enrichment_model (default: claude-sonnet-4-6).
+    Uses the configured cloud_enrichment_model (default: claude-sonnet-5).
     Requires ANTHROPIC_API_KEY to be set.
     """
     from alibi.enrichment.cloud_enrichment import refine_categories_by_cloud

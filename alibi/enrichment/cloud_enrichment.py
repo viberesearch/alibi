@@ -179,7 +179,13 @@ def infer_cloud_brand_category(
             },
             json={
                 "model": resolved_model,
-                "max_tokens": 1024,
+                # Sonnet 5 runs adaptive thinking when `thinking` is omitted,
+                # which would put a thinking block at content[0]; disable it so
+                # the response stays a single text block. 2048 output tokens:
+                # the Sonnet 5 tokenizer counts ~30% more than 4.6 and a
+                # truncated response is unparseable JSON.
+                "thinking": {"type": "disabled"},
+                "max_tokens": 2048,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=timeout,
@@ -422,7 +428,7 @@ def refine_categories_by_cloud(
     category, then sends them to the cloud model for verification. Only
     updates items where the cloud model disagrees with the local LLM category.
 
-    Uses the configured cloud_enrichment_model (default: claude-sonnet-4-6),
+    Uses the configured cloud_enrichment_model (default: claude-sonnet-5),
     which has higher category accuracy than the local LLM (qwen3.5:9b).
 
     Args:
@@ -486,7 +492,10 @@ def refine_categories_by_cloud(
                 },
                 json={
                     "model": resolved_model,
-                    "max_tokens": 1024,
+                    # Same contract as infer_cloud_brand_category: no thinking
+                    # block at content[0], headroom for the Sonnet 5 tokenizer.
+                    "thinking": {"type": "disabled"},
+                    "max_tokens": 2048,
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=_CLOUD_TIMEOUT,
