@@ -272,11 +272,12 @@ class ProcessingPipeline:
     # EN + Turkish (TOPLAM=total, KDV=VAT, TUTAR=amount, NAKIT=cash,
     # KREDI=credit). Anchored so a real product merely containing "tax" stays.
     #   + Russian: ИТОГО/ВСЕГО/СУММА=total, НДС=VAT, НАЛИЧНЫЕ=cash,
-    #   СДАЧА=change, ОПЛАТА/ПЛАТЕЖ=payment, КАРТА=card.
+    #   СДАЧА=change, ОПЛАТА/ПЛАТЕЖ=payment, КАРТА=card, КОМИССИЯ=fee.
     _JUNK_ITEM_RE = re.compile(
         r"^\W*(?:TOPLAM|ARA\s*TOPLAM|TUTAR|KDV|TOTAL|SUB\s*-?\s*TOTAL|TAX|VAT|"
         r"NAKIT|KRED[İI]|CASH|CHANGE|BALANCE|"
-        r"ИТОГО|ИТОГ|ВСЕГО|СУММА|НДС|НАЛИЧНЫЕ|СДАЧА|ОПЛАТА|ПЛАТЕЖ|КАРТА)\b",
+        r"ИТОГО|ИТОГ|ВСЕГО|СУММА|НДС|НАЛИЧНЫЕ|СДАЧА|ОПЛАТА|ПЛАТЕЖ|КАРТА|"
+        r"КОМИССИЯ)\b",
         re.IGNORECASE,
     )
 
@@ -285,20 +286,22 @@ class ProcessingPipeline:
     # "TÜRKİYE BANKASI" or "ZIRAAT BANKASI Transaction" is a slip artifact.
     _JUNK_ITEM_ANYWHERE_RE = re.compile(
         r"\b(?:IBAN|RRN|BATCH|TERM[İI]NAL|[İI]SLEM|BANKAS[İI]|Z[İI]RAAT|"
-        r"ONAY\s*KODU|AUTH\s*CODE|\bPOS\b|\bVISA\b|MASTERCARD|MAESTRO)\b",
+        r"ONAY\s*KODU|AUTH\s*CODE|\bPOS\b|\bVISA\b|MASTERCARD|MAESTRO|"
+        r"СБЕРБАНК)\b",
         re.IGNORECASE,
     )
 
     # Card / cash payment markers in raw OCR text. Presence of these alongside
     # no real items is the signal that a "receipt" is actually a payment slip.
     #   Russian slips: ОПЛАТА/ПЛАТЁЖ=payment, КАРТА=card, ТЕРМИНАЛ=terminal,
-    #   КОД АВТОРИЗАЦИИ=auth code, МИР=Mir network, НАЛИЧНЫЕ=cash, СДАЧА=change.
+    #   КОД АВТОРИЗАЦИИ=auth code, МИР=Mir network, НАЛИЧНЫЕ=cash, СДАЧА=change,
+    #   ОДОБРЕНО=approved (acquirer slips, e.g. Sberbank).
     _PAYMENT_SIGNAL_RE = re.compile(
         r"AUTH\s*CODE|CARDHOLDER|MERCHANT COPY|GOODS OR SERVICES|\bRRN\b|"
         r"BATCH\s*NO|payWave|\bVISA\b|MASTERCARD|MAESTRO|CONTACTLESS|TEMASS[İI]Z|"
         r"TERM[İI]NAL|[İI]SLEM|KRED[İI]|\bNAKIT\b|\bCASH\b|"
         r"ОПЛАТА|ПЛАТ[ЁЕ]Ж|КОД\s*АВТОРИЗАЦИИ|ТЕРМИНАЛ|\bКАРТА\b|\bМИР\b|"
-        r"НАЛИЧНЫЕ|СДАЧА",
+        r"НАЛИЧНЫЕ|СДАЧА|ОДОБРЕНО",
         re.IGNORECASE,
     )
 
@@ -1854,6 +1857,14 @@ class ProcessingPipeline:
             for item in collapse_result.items:
                 item.fact_id = collapse_result.fact.id
             v2_store.store_fact(db, collapse_result.fact, collapse_result.items)
+
+            # Carry user annotations (e.g. map_url) over from the fact this
+            # re-collapse replaced, so a location sent right after the first
+            # upload survives a later document joining the cloud.
+            if existing_fact:
+                v2_store.migrate_fact_annotations(
+                    db, existing_fact["id"], collapse_result.fact.id
+                )
 
             # Resolve item identities for each fact item
             try:

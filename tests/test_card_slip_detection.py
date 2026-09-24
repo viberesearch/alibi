@@ -518,3 +518,58 @@ class TestTurkishCardSlipReclassification:
     def test_itemless_without_payment_signal_not_reclassified(self):
         extraction = {"line_items": [], "raw_text": "just some random text"}
         assert not ProcessingPipeline._looks_like_payment_confirmation(extraction)
+
+
+class TestSberbankSlipDetection:
+    """Russian acquirer slips (e.g. Sberbank) must reclassify to payment
+    confirmation even when the extractor emitted fee/summary line items."""
+
+    _SBER_RAW_TEXT = (
+        "Кофемания Никитская\n"
+        "ПАО СБЕРБАНК\n"
+        "ЧЕК 0045 ОПЛАТА\n"
+        "MIR Карта:(E4) **7631\n"
+        "Сумма (Руб): 13130.00\n"
+        "Комиссия за операцию - 0 Руб.\n"
+        "ОДОБРЕНО\n"
+    )
+
+    def test_commission_line_is_junk(self):
+        assert ProcessingPipeline._is_junk_item("Комиссия за операцию")
+
+    def test_summary_line_is_junk(self):
+        assert ProcessingPipeline._is_junk_item("Сумма (Руб):")
+
+    def test_bank_name_is_junk(self):
+        assert ProcessingPipeline._is_junk_item("ПАО СБЕРБАНК")
+
+    def test_sber_slip_with_fee_items_reclassified(self):
+        """Fee/summary items don't count as real items, so the slip
+        reclassifies on Russian payment markers in the raw text."""
+        assert ProcessingPipeline._looks_like_payment_confirmation(
+            {
+                "line_items": [
+                    {"name": "Комиссия за операцию", "total_price": 0.0},
+                    {"name": "Сумма (Руб)", "total_price": 13130.0},
+                ],
+                "raw_text": self._SBER_RAW_TEXT,
+            }
+        )
+
+    def test_odobreno_marker_alone_triggers(self):
+        assert ProcessingPipeline._looks_like_payment_confirmation(
+            {"line_items": [], "raw_text": "Оплата 1410.00 ОДОБРЕНО"}
+        )
+
+    def test_russian_receipt_with_real_items_not_reclassified(self):
+        """A real Russian receipt paid by card keeps its items and stays
+        a receipt."""
+        assert not ProcessingPipeline._looks_like_payment_confirmation(
+            {
+                "line_items": [
+                    {"name": "Накаяма 350мл", "total_price": 860.0},
+                ],
+                "raw_text": "КОФЕМАНИЯ ... ОПЛАТА КАРТА",
+                "payment_method": "card",
+            }
+        )

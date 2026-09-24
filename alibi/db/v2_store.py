@@ -993,6 +993,26 @@ def delete_fact(db: DatabaseManager, fact_id: str) -> bool:
     return True
 
 
+def migrate_fact_annotations(
+    db: DatabaseManager, old_fact_id: str, new_fact_id: str
+) -> int:
+    """Re-point fact-level annotations from a deleted fact to its successor.
+
+    Re-collapse assigns the fact a fresh id, which would orphan user-provided
+    annotations (e.g. map_url locations sent via the Telegram bot). Call after
+    the successor fact has been stored. Returns the number of rows moved.
+    """
+    if old_fact_id == new_fact_id:
+        return 0
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE annotations SET target_id = ? "
+            "WHERE target_type = 'fact' AND target_id = ?",
+            (new_fact_id, old_fact_id),
+        )
+        return cursor.rowcount
+
+
 def delete_fact_items(db: DatabaseManager, item_ids: list[str]) -> int:
     """Delete specific fact items by ID. Returns count of deleted rows."""
     if not item_ids:

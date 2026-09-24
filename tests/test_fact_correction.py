@@ -804,3 +804,110 @@ class TestSetBundleCloud:
         """No unassigned bundles when everything is properly assigned."""
         _setup_two_cloud_scenario(db)
         assert v2_store.get_unassigned_bundles(db) == []
+
+
+# ---------------------------------------------------------------------------
+# Test: Annotation migration across re-collapse
+# ---------------------------------------------------------------------------
+
+
+def _annotate_fact(db: DatabaseManager, fact_id: str) -> str:
+    """Attach a map_url annotation to a fact, return the annotation ID."""
+    from alibi.services.annotation import annotate
+
+    return annotate(
+        db,
+        target_type="fact",
+        target_id=fact_id,
+        annotation_type="location",
+        key="map_url",
+        value="https://www.google.com/maps/place/Test/@55.75,37.6,17z",
+        metadata={"lat": 55.75, "lng": 37.6, "place_name": "Test"},
+    )
+
+
+def _annotation_target(db: DatabaseManager, annotation_id: str) -> str | None:
+    row = (
+        db.get_connection()
+        .execute("SELECT target_id FROM annotations WHERE id = ?", (annotation_id,))
+        .fetchone()
+    )
+    return row["target_id"] if row else None
+
+
+class TestAnnotationMigration:
+    """Fact-level annotations must survive the fact-id change on re-collapse."""
+
+    def test_recollapse_migrates_annotations(self, db: DatabaseManager):
+        """recollapse_cloud re-points annotations to the successor fact."""
+        doc_id = _make_document(db)
+        atoms = _make_atoms(db, doc_id)
+        bundle_id = _make_bundle(db, doc_id, atoms)
+        cloud_id = _make_cloud_with_bundle(db, bundle_id)
+        old_fact_id = _make_fact(db, cloud_id)
+        ann_id = _annotate_fact(db, old_fact_id)
+
+        new_fact_id = recollapse_cloud(db, cloud_id)
+        assert new_fact_id is not None
+        assert new_fact_id != old_fact_id
+        assert _annotation_target(db, ann_id) == new_fact_id
+
+    @staticmethod
+    def _corroborating_scenario(db: DatabaseManager) -> dict[str, str]:
+        """Receipt cloud + payment-slip cloud for the SAME transaction.
+
+        Same vendor and amount so the merged cloud clears the multi-bundle
+        collapse threshold (vendor 0.3 + totals 0.4 + type diversity 0.2).
+        """
+        doc_a = _make_document(db, "receipt.jpg")
+        atoms_a = _make_atoms(
+            db, doc_a, vendor="Same Store", amount=25.50, item_names=["Milk"]
+        )
+        bundle_a = _make_bundle(db, doc_a, atoms_a, BundleType.BASKET)
+        cloud_a = _make_cloud_with_bundle(db, bundle_a)
+        item_atoms = [a for a in atoms_a if a.atom_type == AtomType.ITEM]
+        fact_a = _make_fact(
+            db,
+            cloud_a,
+            vendor="Same Store",
+            amount=25.50,
+            items=[(a.data["name"], a.id) for a in item_atoms],
+        )
+
+        doc_b = _make_document(db, "slip.jpg")
+        atoms_b = _make_atoms(db, doc_b, vendor="Same Store", amount=25.50)
+        bundle_b = _make_bundle(db, doc_b, atoms_b, BundleType.PAYMENT_RECORD)
+        cloud_b = _make_cloud_with_bundle(db, bundle_b)
+        fact_b = _make_fact(db, cloud_b, vendor="Same Store", amount=25.50)
+
+        return {
+            "cloud_a": cloud_a,
+            "fact_a": fact_a,
+            "bundle_b": bundle_b,
+            "cloud_b": cloud_b,
+            "fact_b": fact_b,
+        }
+
+    def test_move_bundle_migrates_target_annotations(self, db: DatabaseManager):
+        """An annotation on the target fact follows it through the merge."""
+        data = self._corroborating_scenario(db)
+        ann_id = _annotate_fact(db, data["fact_a"])
+
+        result = move_bundle(db, data["bundle_b"], target_cloud_id=data["cloud_a"])
+        assert result.success
+        assert result.target_fact_id is not None
+        assert _annotation_target(db, ann_id) == result.target_fact_id
+
+    def test_move_bundle_migrates_dissolved_source_annotations(
+        self, db: DatabaseManager
+    ):
+        """When the source cloud dissolves, its fact's annotations move to
+        the merged target fact instead of being orphaned."""
+        data = self._corroborating_scenario(db)
+        ann_id = _annotate_fact(db, data["fact_b"])
+
+        result = move_bundle(db, data["bundle_b"], target_cloud_id=data["cloud_a"])
+        assert result.success
+        assert result.target_fact_id is not None
+        # Cloud B had only bundle_b, so it dissolved
+        assert _annotation_target(db, ann_id) == result.target_fact_id

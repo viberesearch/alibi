@@ -92,6 +92,8 @@ def move_bundle(
     if source_bundles:
         source_fact_id = _try_recollapse(db, source_cloud_id)
         result.source_fact_id = source_fact_id
+        if source_fact and source_fact_id:
+            v2_store.migrate_fact_annotations(db, source_fact["id"], source_fact_id)
     else:
         # Source cloud is now empty — clean it up
         result.deleted_clouds = v2_store.delete_empty_clouds(db)
@@ -101,6 +103,14 @@ def move_bundle(
     if target_cid:
         target_fact_id = _try_recollapse(db, target_cid)
         result.target_fact_id = target_fact_id
+        if target_fact_id:
+            # Annotations from the replaced target fact, and from the moved
+            # bundle's old fact when its source cloud dissolved, both belong
+            # to the merged successor.
+            if target_cloud_id and target_fact:
+                v2_store.migrate_fact_annotations(db, target_fact["id"], target_fact_id)
+            if source_fact and not source_bundles:
+                v2_store.migrate_fact_annotations(db, source_fact["id"], target_fact_id)
 
     # 6. Identity feedback: teach the registry when vendors are merged
     try:
@@ -141,7 +151,10 @@ def recollapse_cloud(
     if existing:
         v2_store.delete_fact(db, existing["id"])
 
-    return _try_recollapse(db, cloud_id)
+    fact_id = _try_recollapse(db, cloud_id)
+    if existing and fact_id:
+        v2_store.migrate_fact_annotations(db, existing["id"], fact_id)
+    return fact_id
 
 
 def mark_disputed(db: DatabaseManager, cloud_id: str) -> bool:
