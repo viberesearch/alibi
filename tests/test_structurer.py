@@ -82,7 +82,7 @@ class TestStructureOcrText:
         schema = {"type": "object", "properties": {"items": {"type": "array"}}}
         structure_ocr_text(
             "",
-            model="gemma4:12b",
+            model="gemma4:12b-mlx",
             ollama_url="http://test:11434",
             emphasis_prompt="Give me states\n{...}",
             response_format=schema,
@@ -137,7 +137,7 @@ class TestStructureOcrText:
             {"response": json.dumps({"vendor": "Big"}), "done_reason": "stop"},
         ]
         result = structure_ocr_text(
-            "text", model="gemma4:12b", ollama_url="http://test:11434"
+            "text", model="gemma4:12b-mlx", ollama_url="http://test:11434"
         )
         assert mock_call.call_count == 2
         retry = mock_call.call_args_list[1]
@@ -152,7 +152,9 @@ class TestStructureOcrText:
             "response": json.dumps({"vendor": "Small"}),
             "done_reason": "stop",
         }
-        structure_ocr_text("text", model="gemma4:12b", ollama_url="http://test:11434")
+        structure_ocr_text(
+            "text", model="gemma4:12b-mlx", ollama_url="http://test:11434"
+        )
         assert mock_call.call_count == 1
 
     @patch("alibi.extraction.structurer._call_ollama_text")

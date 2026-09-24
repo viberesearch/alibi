@@ -119,7 +119,7 @@ Only invoked when the text parser's confidence is below threshold. Two modes:
 - **Correction prompt** (confidence >= 0.3): Sends only uncertain text regions with confidence hints. ~60% token reduction.
 - **Full prompt** (confidence < 0.3): Sends complete OCR text for full extraction.
 
-Local-first (gemma4:12b via Ollama, the default structuring model), with cloud fallback (Gemini Flash) when the local model can't handle the document. Decoding is constrained to a JSON schema (Ollama `format`) so the model emits valid, conforming output. Each cloud call is tracked -- the system learns vendor templates to avoid future escalation.
+Local-first (gemma4:12b-mlx via Ollama, the default structuring model), with cloud fallback (Gemini Flash) when the local model can't handle the document. Decoding is constrained to a JSON schema (Ollama `format`) so the model emits valid, conforming output. Each cloud call is tracked -- the system learns vendor templates to avoid future escalation.
 
 ### YAML Intermediary
 Processing is split into two phases:

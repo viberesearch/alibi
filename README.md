@@ -101,7 +101,7 @@ uv sync --extra all
 ollama pull glm-ocr
 
 # Optional: pull the local LLM for Stage 3 structuring + local enrichment
-ollama pull gemma4:12b
+ollama pull gemma4:12b-mlx
 ```
 
 ### Configure
@@ -142,7 +142,7 @@ Service Layer (alibi/services/ — 13 facades, ~88 functions)
   +---> Extraction Pipeline (3-stage hybrid)
   |       Stage 1: OCR (glm-ocr, local, 1.5-6s)
   |       Stage 2: Heuristic parser (~2ms, handles 64% of docs)
-  |       Stage 3: LLM structuring (local gemma4:12b OR cloud Gemini 3.5 Flash)
+  |       Stage 3: LLM structuring (local gemma4:12b-mlx OR cloud Gemini 3.5 Flash)
   |
   +---> Atom-Cloud-Fact Pipeline
   |       atoms/parser -> clouds/formation -> clouds/collapse
@@ -161,7 +161,7 @@ The extraction pipeline's Stage 3 (LLM correction) supports two backends:
 
 | | Local (Ollama) | Cloud (Gemini) |
 |---|---|---|
-| Model | gemma4:12b | Gemini 3.5 Flash |
+| Model | gemma4:12b-mlx | Gemini 3.5 Flash |
 | Cost | Free | ~$0.001/doc |
 | Speed | 2-5s | 0.5-1s |
 | RAM | ~8GB | None |

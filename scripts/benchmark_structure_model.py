@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Head-to-head benchmark for local structuring models (OCR text -> schema JSON).
 
-Built to evaluate a new candidate model (e.g. ``gemma4:12b`` when it lands on
+Built to evaluate a new candidate model (e.g. ``gemma4:12b-mlx`` when it lands on
 Ollama) against the incumbent structuring model (``qwen3.5:9b``) on the exact
 production path: schema-enforced output (Ollama ``format``) + reasoning disabled
 (``think=false``). It reuses the production internals, so the numbers reflect
@@ -25,22 +25,22 @@ Go/no-go: a candidate replaces the incumbent only if it is better on quality
 USAGE
   # Compare incumbent vs candidate on the text-structuring path:
   uv run python scripts/benchmark_structure_model.py \
-      --models qwen3.5:9b,gemma4:12b \
+      --models qwen3.5:9b,gemma4:12b-mlx \
       --images /path/to/images --limit 10
 
   # Also test the candidate as a single-pass vision extractor:
   uv run python scripts/benchmark_structure_model.py \
-      --models qwen3.5:9b,gemma4:12b --vision gemma4:12b \
+      --models qwen3.5:9b,gemma4:12b-mlx --vision gemma4:12b-mlx \
       --images /path/to/images --limit 10
 
-WHEN gemma4:12b LANDS ON OLLAMA
+WHEN gemma4:12b-mlx LANDS ON OLLAMA
   1. Confirm the tag is live:
        curl -s -o /dev/null -w '%{http_code}' \
          https://registry.ollama.ai/v2/library/gemma4/manifests/12b
      (404 = not yet; 200/412 = published)
-  2. Pull it:  ollama pull gemma4:12b
+  2. Pull it:  ollama pull gemma4:12b-mlx
   3. Fire:     uv run python scripts/benchmark_structure_model.py \
-                 --models qwen3.5:9b,gemma4:12b --vision gemma4:12b \
+                 --models qwen3.5:9b,gemma4:12b-mlx --vision gemma4:12b-mlx \
                  --images <batch dir> --limit 12
   Models not present locally are skipped with a notice (so the script is safe to
   run before the candidate exists -- it just benchmarks what is installed).
@@ -104,7 +104,7 @@ def model_present(model: str, installed: set[str]) -> bool:
     """True only if the EXACT tag is installed.
 
     A tagless name (``gemma4``) defaults to ``gemma4:latest``. The tag must
-    match exactly otherwise: ``gemma4:12b`` is NOT satisfied by an installed
+    match exactly otherwise: ``gemma4:12b-mlx`` is NOT satisfied by an installed
     ``gemma4:e4b`` — that is the whole point of the availability guard.
     """
     if model in installed:
@@ -228,7 +228,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--models",
-        default=f"{cfg.ollama_structure_model},gemma4:12b",
+        default=f"{cfg.ollama_structure_model},gemma4:12b-mlx",
         help="comma-separated structuring models; first is the incumbent baseline",
     )
     ap.add_argument(

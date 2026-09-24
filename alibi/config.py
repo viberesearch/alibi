@@ -78,7 +78,7 @@ class Config(BaseSettings):
     # OCR timeout per request (seconds)
     ocr_timeout: float = Field(default=120.0)
 
-    # Structuring (Stage 3) request timeout. gemma4:12b can exceed 120s on a
+    # Structuring (Stage 3) request timeout. gemma4:12b-mlx can exceed 120s on a
     # long receipt; raised so long documents finish rather than time out.
     structure_timeout: float = Field(default=240.0)
 
