@@ -903,7 +903,7 @@ class TestCloudEnrichment:
         assert mock_post.called
         call_kwargs = mock_post.call_args
         sent_json = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
-        assert sent_json["model"] == "claude-haiku-4-5-20251001"
+        assert sent_json["model"] == "claude-haiku-4-5"
         assert len(sent_json["messages"]) == 1
         assert "Nutella 400g" in sent_json["messages"][0]["content"]
         assert "3017624010701" in sent_json["messages"][0]["content"]

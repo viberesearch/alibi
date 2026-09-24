@@ -31,7 +31,14 @@ _CLOUD_CONFIDENCE = 0.85
 _ENRICHMENT_SOURCE = "cloud_api"
 
 # Default model — cheapest/fastest Haiku model for initial enrichment
-_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_DEFAULT_MODEL = "claude-haiku-4-5"
+
+# Claude Opus 5.5 always thinks — `thinking: {"type": "disabled"}` 400s at
+# every effort level, unlike every other model this module can be pointed
+# at (Sonnet 5, Haiku 4.5, and any legacy override). Detected by prefix so
+# an operator can still override `cloud_enrichment_model` to an older Opus
+# without tripping the Opus-5.5-only branch.
+_OPUS_5_5_PREFIX = "claude-opus-5-5"
 
 # Anthropic Messages API endpoint
 _API_ENDPOINT = "https://api.anthropic.com/v1/messages"
@@ -123,6 +130,37 @@ def _get_model() -> str:
     return get_config().cloud_enrichment_model
 
 
+def _thinking_request_fields(model: str) -> dict[str, Any]:
+    """Thinking/effort fields for the Messages API request, by model.
+
+    Claude Opus 5.5 rejects `thinking: {"type": "disabled"}` at every
+    effort level (400 invalid_request_error) — thinking is always on for
+    that model, so effort is the only lever. This is a high-volume,
+    latency-sensitive enrichment path, so it gets adaptive thinking capped
+    at `low` effort. Every other model served here (Sonnet 5, Haiku 4.5,
+    and any legacy override) accepts explicit disablement, which keeps
+    the response to a single text block with no thinking-token cost.
+    """
+    if model.startswith(_OPUS_5_5_PREFIX):
+        return {"output_config": {"effort": "low"}}
+    return {"thinking": {"type": "disabled"}}
+
+
+def _extract_text_block(content: list[dict[str, Any]]) -> str | None:
+    """Return the text of the first `type: "text"` block, or None.
+
+    Claude Opus 5.5 always emits thinking first, so a response can begin
+    with one or more `thinking` blocks even under `display: "omitted"`
+    (empty `thinking` text) — reading `content[0]` unconditionally would
+    grab the wrong block. Models sent through the disabled-thinking branch
+    still return a single text block, so this is a no-op for them.
+    """
+    for block in content:
+        if block.get("type") == "text":
+            return block.get("text")
+    return None
+
+
 def infer_cloud_brand_category(
     items: list[dict[str, str]],
     api_key: str | None = None,
@@ -170,6 +208,13 @@ def infer_cloud_brand_category(
     try:
         import httpx
 
+        # Opus 5.5 always thinks and thinking counts toward max_tokens, so
+        # give it extra headroom; every other model here runs with thinking
+        # disabled, where 2048 has always covered this short JSON reply.
+        max_output_tokens = (
+            4096 if resolved_model.startswith(_OPUS_5_5_PREFIX) else 2048
+        )
+
         response = httpx.post(
             _API_ENDPOINT,
             headers={
@@ -179,13 +224,8 @@ def infer_cloud_brand_category(
             },
             json={
                 "model": resolved_model,
-                # Sonnet 5 runs adaptive thinking when `thinking` is omitted,
-                # which would put a thinking block at content[0]; disable it so
-                # the response stays a single text block. 2048 output tokens:
-                # the Sonnet 5 tokenizer counts ~30% more than 4.6 and a
-                # truncated response is unparseable JSON.
-                "thinking": {"type": "disabled"},
-                "max_tokens": 2048,
+                **_thinking_request_fields(resolved_model),
+                "max_tokens": max_output_tokens,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=timeout,
@@ -193,7 +233,10 @@ def infer_cloud_brand_category(
         response.raise_for_status()
         data = response.json()
 
-        raw_text = data["content"][0]["text"]
+        raw_text = _extract_text_block(data["content"])
+        if raw_text is None:
+            logger.warning("cloud enrichment: no text block in API response")
+            return []
 
         # Strip markdown fences if the model added them despite instructions
         stripped = raw_text.strip()
@@ -483,6 +526,12 @@ def refine_categories_by_cloud(
         try:
             import httpx
 
+            # Same contract as infer_cloud_brand_category: thinking/effort
+            # picked per model, headroom for Opus 5.5's always-on thinking.
+            max_output_tokens = (
+                4096 if resolved_model.startswith(_OPUS_5_5_PREFIX) else 2048
+            )
+
             response = httpx.post(
                 _API_ENDPOINT,
                 headers={
@@ -492,10 +541,8 @@ def refine_categories_by_cloud(
                 },
                 json={
                     "model": resolved_model,
-                    # Same contract as infer_cloud_brand_category: no thinking
-                    # block at content[0], headroom for the Sonnet 5 tokenizer.
-                    "thinking": {"type": "disabled"},
-                    "max_tokens": 2048,
+                    **_thinking_request_fields(resolved_model),
+                    "max_tokens": max_output_tokens,
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=_CLOUD_TIMEOUT,
@@ -503,7 +550,12 @@ def refine_categories_by_cloud(
             response.raise_for_status()
             data = response.json()
 
-            raw_text = data["content"][0]["text"]
+            raw_text = _extract_text_block(data["content"])
+            if raw_text is None:
+                logger.warning(
+                    "cloud refinement: no text block in API response for batch"
+                )
+                continue
 
             # Strip markdown fences if the model added them despite instructions
             stripped = raw_text.strip()

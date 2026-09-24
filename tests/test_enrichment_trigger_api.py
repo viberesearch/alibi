@@ -423,7 +423,71 @@ class TestGetModel:
         sent_json = mock_post.call_args.kwargs.get("json") or mock_post.call_args[
             1
         ].get("json")
-        assert sent_json["model"] == "claude-haiku-4-5-20251001"
+        assert sent_json["model"] == "claude-haiku-4-5"
+
+    def test_opus_5_5_uses_effort_not_disabled_thinking(self) -> None:
+        """Opus 5.5 400s on thinking disabled at any effort — must use effort instead."""
+        import json as _json
+
+        from alibi.enrichment.cloud_enrichment import infer_cloud_brand_category
+
+        api_payload = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": _json.dumps(
+                        {"items": [{"idx": 1, "brand": None, "category": "Other"}]}
+                    ),
+                }
+            ]
+        }
+        mock_response = MagicMock()
+        mock_response.json.return_value = api_payload
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.post", return_value=mock_response) as mock_post:
+            infer_cloud_brand_category(
+                [{"idx": 1, "name": "Widget"}],
+                api_key="test-key",
+                model="claude-opus-5-5",
+            )
+
+        sent_json = mock_post.call_args.kwargs.get("json") or mock_post.call_args[
+            1
+        ].get("json")
+        assert sent_json["model"] == "claude-opus-5-5"
+        assert "thinking" not in sent_json
+        assert sent_json["output_config"] == {"effort": "low"}
+
+    def test_infer_reads_text_block_after_leading_thinking_block(self) -> None:
+        """A response starting with a thinking block must not be mistaken for text."""
+        import json as _json
+
+        from alibi.enrichment.cloud_enrichment import infer_cloud_brand_category
+
+        api_payload = {
+            "content": [
+                {"type": "thinking", "text": ""},
+                {
+                    "type": "text",
+                    "text": _json.dumps(
+                        {"items": [{"idx": 1, "brand": "Acme", "category": "Other"}]}
+                    ),
+                },
+            ]
+        }
+        mock_response = MagicMock()
+        mock_response.json.return_value = api_payload
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.post", return_value=mock_response):
+            result = infer_cloud_brand_category(
+                [{"idx": 1, "name": "Widget"}],
+                api_key="test-key",
+                model="claude-opus-5-5",
+            )
+
+        assert result == [{"idx": 1, "brand": "Acme", "category": "Other"}]
 
 
 # ---------------------------------------------------------------------------
