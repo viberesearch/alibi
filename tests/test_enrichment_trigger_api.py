@@ -336,7 +336,7 @@ class TestConfigCloudEnrichmentModel:
     ) -> None:
         monkeypatch.setenv("ALIBI_TESTING", "1")
         config = Config()
-        assert config.cloud_enrichment_model == "claude-sonnet-5"
+        assert config.cloud_enrichment_model == "claude-sonnet-5-5"
 
     def test_cloud_enrichment_model_from_env(
         self, monkeypatch: pytest.MonkeyPatch
