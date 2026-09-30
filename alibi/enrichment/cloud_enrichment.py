@@ -34,11 +34,13 @@ _ENRICHMENT_SOURCE = "cloud_api"
 _DEFAULT_MODEL = "claude-haiku-4-5"
 
 # Claude Opus 5.5 always thinks — `thinking: {"type": "disabled"}` 400s at
-# every effort level, unlike every other model this module can be pointed
-# at (Sonnet 5, Haiku 4.5, and any legacy override). Detected by prefix so
-# an operator can still override `cloud_enrichment_model` to an older Opus
-# without tripping the Opus-5.5-only branch.
+# every effort level, and so does Sonnet 5.5 (its lowest setting is
+# `thinking: {"type": "between_tools"}`). Sonnet 5, Haiku 4.5 and any
+# legacy override still accept disablement. Detected by prefix so an
+# operator can still override `cloud_enrichment_model` to an older Opus
+# or Sonnet without tripping the 5.5-only branches.
 _OPUS_5_5_PREFIX = "claude-opus-5-5"
+_SONNET_5_5_PREFIX = "claude-sonnet-5-5"
 
 # Anthropic Messages API endpoint
 _API_ENDPOINT = "https://api.anthropic.com/v1/messages"
@@ -137,12 +139,17 @@ def _thinking_request_fields(model: str) -> dict[str, Any]:
     effort level (400 invalid_request_error) — thinking is always on for
     that model, so effort is the only lever. This is a high-volume,
     latency-sensitive enrichment path, so it gets adaptive thinking capped
-    at `low` effort. Every other model served here (Sonnet 5, Haiku 4.5,
-    and any legacy override) accepts explicit disablement, which keeps
-    the response to a single text block with no thinking-token cost.
+    at `low` effort. Claude Sonnet 5.5 also rejects `disabled`; its lowest
+    setting is `{"type": "between_tools"}` (no other fields), which only
+    thinks between tool calls, so this tool-free request gets no thinking
+    blocks. Every other model served here (Sonnet 5, Haiku 4.5, and any
+    legacy override) accepts explicit disablement, which keeps the
+    response to a single text block with no thinking-token cost.
     """
     if model.startswith(_OPUS_5_5_PREFIX):
         return {"output_config": {"effort": "low"}}
+    if model.startswith(_SONNET_5_5_PREFIX):
+        return {"thinking": {"type": "between_tools"}}
     return {"thinking": {"type": "disabled"}}
 
 
@@ -471,7 +478,7 @@ def refine_categories_by_cloud(
     category, then sends them to the cloud model for verification. Only
     updates items where the cloud model disagrees with the local LLM category.
 
-    Uses the configured cloud_enrichment_model (default: claude-sonnet-5),
+    Uses the configured cloud_enrichment_model (default: claude-sonnet-5-5),
     which has higher category accuracy than the local LLM (qwen3.5:9b).
 
     Args:
