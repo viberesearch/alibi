@@ -505,6 +505,27 @@ class TestExtractLineItems:
         assert not any("TICKET" in n for n in names), f"TICKET found in items: {names}"
         assert len(items) == 2
 
+    def test_discount_line_reduces_item_above(self):
+        """LIDL's "Extremo -0,70" is a discount on the item above, not an item."""
+        text = (
+            "LIDL Cyprus\n"
+            "18/03/2026\n"
+            "\n"
+            "KEIK LINK 600G/SPONG.CAKE 3,29 B\n"
+            "Extremo -0,70\n"
+            "TYP IKOY NE 200G/GOUDA 1,99 B\n"
+            "Extremo -0,20\n"
+            "TOTAL 4,38\n"
+        )
+        items = parse_ocr_text(text, doc_type="receipt").data["line_items"]
+        assert [i["name"] for i in items] == [
+            "KEIK LINK 600G/SPONG.CAKE",
+            "TYP IKOY NE 200G/GOUDA",
+        ]
+        assert [i["total_price"] for i in items] == [2.59, 1.79]
+        assert [i["discount_amount"] for i in items] == [0.7, 0.2]
+        assert sum(i["total_price"] for i in items) == pytest.approx(4.38)
+
 
 class TestExtractTotals:
     def test_papas_totals(self):

@@ -728,6 +728,13 @@ _BARCODE_PREFIX_PATTERN = re.compile(r"^Barcode\s*:\s*(\d{7,14})\s*$", re.IGNORE
 # Standalone EAN barcode: exactly 8 or 13 digits on their own line
 _STANDALONE_BARCODE_PATTERN = re.compile(r"^\s*(\d{8}|\d{13})\s*$")
 
+# Per-item discount line printed under the item it reduces, e.g. LIDL's
+# "Extremo -0,70": a short label with no digits, then a minus sign directly
+# before the amount. The space-free "-0,70" keeps "Name - 2,50" item lines out.
+_ITEM_DISCOUNT_LINE_PATTERN = re.compile(
+    r"^(?P<label>[^\d\-]{2,30}?)\s*-(?P<amount>\d+[.,]\d{2})\s*[A-Z]?\s*$"
+)
+
 # Parenthetical product annotation at the end of an item name.
 # Matches suffixes like "(takeaway)", "(250g, Ethiopia)", "(Cold pressed juice)".
 # Minimum 2 chars inside parens; maximum 40 to avoid matching legal suffixes or
@@ -2259,6 +2266,20 @@ def _extract_line_items(
             else:
                 pending_barcode = bc_digits
                 _bc_before_count += 1
+            i += 1
+            continue
+
+        # Per-item discount line: reduce the item above instead of adding a
+        # "+0.70" item (the minus sign was otherwise lost).
+        disc_match = _ITEM_DISCOUNT_LINE_PATTERN.match(line)
+        if disc_match and items and len(disc_match.group("label").split()) <= 3:
+            amount = _parse_decimal(disc_match.group("amount"))
+            last = items[-1]
+            if amount is not None and last.get("total_price") is not None:
+                last["total_price"] = round(last["total_price"] - amount, 2)
+                last["discount_amount"] = round(
+                    (last.get("discount_amount") or 0) + amount, 2
+                )
             i += 1
             continue
 
