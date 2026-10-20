@@ -259,6 +259,7 @@ def write_findings_yaml(
     path: Path,
     *,
     generated: str,
+    header: str | None = None,
 ) -> None:
     """Write the review file (all findings default to approved: false)."""
     doc = {
@@ -267,7 +268,7 @@ def write_findings_yaml(
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(doc, allow_unicode=True, sort_keys=False)
-    path.write_text(_HEADER + body, encoding="utf-8")
+    path.write_text((header or _HEADER) + body, encoding="utf-8")
 
 
 def load_approved_findings(path: Path) -> list[CoherenceFinding]:

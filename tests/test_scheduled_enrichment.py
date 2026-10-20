@@ -216,10 +216,11 @@ class TestEnrichmentScheduler:
             )
             result = scheduler.run_now()
             assert isinstance(result, EnrichmentCycleResult)
-            # 5 core phases + fx_backfill + categorize backstops
-            assert len(result.phases) == 7
+            # 5 core phases + fx_backfill + categorize backstops + jev_review
+            assert len(result.phases) == 8
             phase_names = {p.name for p in result.phases}
-            assert {"fx_backfill", "categorize"} <= phase_names
+            assert {"fx_backfill", "categorize", "jev_review"} <= phase_names
+            assert result.phases[-1].skipped  # Jev review is off by default
             assert result.duration_seconds >= 0
             assert scheduler.state.cycle_count == 1
         finally:
@@ -407,8 +408,8 @@ class TestEnrichmentScheduler:
             # First phase errored but others still ran
             assert result.phases[0].error is not None
             assert result.phases[0].name == "barcode_cascade"
-            # Subsequent phases still executed (5 core + 2 backstops)
-            assert len(result.phases) == 7
+            # Subsequent phases still executed (5 core + 2 backstops + jev_review)
+            assert len(result.phases) == 8
             assert result.phases[1].error is None
         finally:
             sched._STATE_FILE = original_file

@@ -203,6 +203,7 @@ Most documents (64%) are handled by the heuristic parser alone, making Stage 3 a
 - **Comparable-name canonicalization**: `tidy-comparable-names` strips leftover size/pack tokens deterministically; `propose-name-merges` / `apply-name-merges` cluster semantic duplicates (synonyms, singular/plural, OCR garble) by embedding similarity within each unit, human-review-gated (never auto-merges)
 - **Product state facet**: a controlled vocabulary (fresh / frozen / canned / dried / cured / pickled / roasted / cooked) written into each item's `attributes`, distinguishing forms of the same food the unit alone can't — fresh vs canned artichokes, raw vs roasted cashews, fresh vs smoked salmon (`lt enrich states`)
 - Flexible per-item `attributes` JSON (size, fat %, organic, free-range, lactose-free, state, ...) filterable/groupable independently
+- **Jev category review** (opt-in, `lt enrich review-jev`): Typesafe's hosted Jev decision model re-reads assigned categories, 32 products per call, and writes conflicting or more specific answers to a review file; nothing changes until you approve entries (`apply-coherence-fixes`). Sends only the item line, comparable name, brand and store
 - Enrichment provenance tracking with user feedback loop (confirm/reject via Web UI or Telegram)
 - Cross-vendor barcode matching (shared EAN/UPC propagation)
 - Nutritional tracking: joins purchased items with OFF product data for per-item nutritional estimates
@@ -301,6 +302,7 @@ uv run lt enrich all [-l 200]        # Combined local enrichment (unit+name+cate
 uv run lt enrich states              # Product state facet (fresh/canned/cured/roasted/...)
 uv run lt enrich propose-name-merges # Embedding-based comparable_name merge proposals (review-gated)
 uv run lt enrich gemini [-l 500]     # Gemini mega-batch enrichment
+bws run -- uv run lt enrich review-jev  # Jev review of assigned categories (opt-in, review-gated)
 uv run lt items avg-price --group-by comparable_name,comparable_unit  # Item price analytics
 uv run lt items trend "milk"         # Price trend for a product over time across vendors
 uv run lt items rebuild              # Resync the item_stars analytics mirror

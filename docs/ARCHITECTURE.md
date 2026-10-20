@@ -227,6 +227,8 @@ flowchart TD
 | 7 | Gemini mega-batch | 0.85 | brand, category, unit_quantity |
 | 8 | Anthropic cloud | 0.85 | brand, category refinement |
 
+**Jev review (opt-in, not a tier).** `alibi/enrichment/jev_review.py` re-reads categories already assigned, grouped by product and sent 32 to a call to Typesafe's `/v1/systemone` (pinned `jev-1.14.0`; branch, then leaf, because `choice` allows at most 26 options). A conflicting answer at confidence >= 0.8, or a more specific one at >= 0.9 while `ALIBI_JEV_AUTO_APPLY` is off, goes to a timestamped review file under `jev_review/` next to the DB; with auto-apply on, more specific answers are written directly (`enrichment_source='jev_refine'`). Rows are stamped `category_reviewed_by` (migration 046) so later runs send only new products. With `ALIBI_JEV_REVIEW_SCHEDULED=true` it runs as the scheduler's last phase.
+
 Each source records its provenance (`enrichment_source`) and confidence (`enrichment_confidence`). Higher-confidence sources override lower ones.
 
 ### Background Scheduler

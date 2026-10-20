@@ -546,6 +546,83 @@ def enrich_audit_coherence(limit: int, vendor: str | None, output: str) -> None:
     )
 
 
+@enrich.command("review-jev")
+@click.option(
+    "--limit",
+    "-l",
+    default=500,
+    show_default=True,
+    help="Max products to review (rows sharing a product count once)",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default=None,
+    help="Directory for the review file (default: jev_review/ next to the DB).",
+)
+def enrich_review_jev(limit: int, output_dir: str | None) -> None:
+    """Review assigned categories with the hosted Jev model (opt-in).
+
+    Needs ALIBI_JEV_ENABLED=true and JEV_API_KEY (run under ``bws run --``).
+    Sends only the receipt line, comparable name, brand and store, 32 products
+    per call. Conflicting answers, and more specific ones while
+    ALIBI_JEV_AUTO_APPLY is off, go to a review file; approve entries there and
+    run ``lt enrich apply-coherence-fixes --file <file>``. Reviewed rows are
+    marked, so the next run sends only new products.
+    """
+    from pathlib import Path
+
+    from alibi.enrichment.jev_review import (
+        JevError,
+        default_review_dir,
+        review_categories,
+        write_review_file,
+    )
+
+    cfg = get_config()
+    if not cfg.jev_enabled:
+        console.print(
+            "[yellow]Jev review is off. Set ALIBI_JEV_ENABLED=true and provide "
+            "JEV_API_KEY to use it.[/yellow]"
+        )
+        return
+    db = get_db()
+    if not db.is_initialized():
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    console.print(
+        f"[dim]Reviewing up to {limit} product(s) with {cfg.jev_model}...[/dim]"
+    )
+    try:
+        result = review_categories(db, limit=limit, cfg=cfg)
+    except JevError as exc:
+        console.print(f"[red]Jev review stopped: {exc}[/red]")
+        return
+
+    console.print(
+        f"[green]Reviewed {result.groups_reviewed} product(s) "
+        f"({result.items_marked} row(s)) in {result.calls} call(s); "
+        f"auto-refined {result.refined_items} row(s).[/green]"
+    )
+    if not result.findings:
+        console.print("[dim]No findings to review.[/dim]")
+        return
+    directory = Path(output_dir) if output_dir else default_review_dir(cfg)
+    path = write_review_file(result.findings, directory)
+    for f in result.findings[:25]:
+        console.print(
+            f"  [cyan]{f.name}[/cyan]: {f.category_path} -> "
+            f"[yellow]{f.suggested_category_path}[/yellow] [dim]({f.reason})[/dim]"
+        )
+    if len(result.findings) > 25:
+        console.print(f"  [dim]... and {len(result.findings) - 25} more[/dim]")
+    console.print(
+        f"[bold]Review[/bold] {path} (set [cyan]approved: true[/cyan]), then run "
+        f"[bold]lt enrich apply-coherence-fixes --file {path}[/bold]."
+    )
+
+
 @enrich.command("apply-coherence-fixes")
 @click.option(
     "--file",

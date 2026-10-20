@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -160,6 +160,28 @@ class Config(BaseSettings):
     anthropic_api_key: Optional[str] = Field(default=None)
     cloud_enrichment_model: str = Field(default="claude-sonnet-5-5")
     llm_enrichment_timeout: float = Field(default=60.0)
+
+    # Jev category review (Typesafe /v1/systemone), off by default. Reviews
+    # categories the local passes assigned; see alibi/enrichment/jev_review.py.
+    # The key is read from JEV_API_KEY (the BWS name) or ALIBI_JEV_API_KEY.
+    jev_enabled: bool = Field(default=False)
+    jev_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "JEV_API_KEY", "ALIBI_JEV_API_KEY", "jev_api_key"
+        ),
+    )
+    jev_url: str = Field(default="https://api.typesafe.ai/v1/systemone")
+    # Pin the version, not jev-latest: the alias moves on release.
+    jev_model: str = Field(default="jev-1.14.0")
+    jev_batch_size: int = Field(default=32)  # products per call, max 64
+    jev_flag_threshold: float = Field(default=0.8)
+    jev_refine_threshold: float = Field(default=0.9)
+    # Apply "more specific" answers directly instead of listing them for review.
+    jev_auto_apply: bool = Field(default=False)
+    # Run the review as the last phase of each scheduled enrichment cycle.
+    jev_review_scheduled: bool = Field(default=False)
+    jev_timeout: float = Field(default=60.0)
 
     # MindsDB predictors
     mindsdb_enabled: bool = Field(default=False)

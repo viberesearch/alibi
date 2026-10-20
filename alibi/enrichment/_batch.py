@@ -193,7 +193,7 @@ def run_vendor_batches(
 
 
 def mark_processed(
-    db: "DatabaseManager", column: str, item_ids: Iterable[str], value: int = 1
+    db: "DatabaseManager", column: str, item_ids: Iterable[str], value: int | str = 1
 ) -> None:
     """Stamp an idempotency-sentinel column for the given fact_items.
 
@@ -207,7 +207,7 @@ def mark_processed(
 
     ``value`` is 1 for the boolean markers; ``categorize`` passes the taxonomy
     version it categorised under, so a later ``TAXONOMY_VERSION`` bump makes the
-    row eligible again. ``column`` is a trusted internal literal (never user
+    row eligible again; ``jev_review`` passes its model-and-taxonomy marker string. ``column`` is a trusted internal literal (never user
     input), so the f-string interpolation is safe.
     """
     ids = list(item_ids)

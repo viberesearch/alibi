@@ -261,6 +261,12 @@ class EnrichmentScheduler:
             # (finalizer categorises per-document; this catches stragglers).
             result.phases.append(self._run_categorize(db, limit))
 
+            # Phase 8: hosted Jev review of assigned categories (opt-in).
+            if self._config.jev_enabled and self._config.jev_review_scheduled:
+                result.phases.append(self._run_jev_review(db, limit))
+            else:
+                result.phases.append(PhaseResult(name="jev_review", skipped=True))
+
             result.finished_at = time.time()
 
             # Update state
@@ -403,6 +409,39 @@ class EnrichmentScheduler:
             logger.exception("FX backfill failed")
             return PhaseResult(
                 name="fx_backfill",
+                duration_seconds=time.time() - start,
+                error=str(e),
+            )
+
+    def _run_jev_review(self, db: DatabaseManager, limit: int) -> PhaseResult:
+        """Phase 8: Jev review; findings go to a timestamped review file."""
+        start = time.time()
+        try:
+            from alibi.enrichment.jev_review import (
+                default_review_dir,
+                review_categories,
+                write_review_file,
+            )
+
+            review = review_categories(db, limit=limit, cfg=self._config)
+            if review.findings:
+                path = write_review_file(
+                    review.findings, default_review_dir(self._config)
+                )
+                logger.info(
+                    "Jev review: %d finding(s) written to %s",
+                    len(review.findings),
+                    path,
+                )
+            return PhaseResult(
+                name="jev_review",
+                items_processed=review.items_marked,
+                duration_seconds=time.time() - start,
+            )
+        except Exception as e:
+            logger.exception("Jev review failed")
+            return PhaseResult(
+                name="jev_review",
                 duration_seconds=time.time() - start,
                 error=str(e),
             )
