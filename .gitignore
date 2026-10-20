@@ -99,3 +99,6 @@ review/
 
 # Datasette read-only snapshot (regenerated from the live DB)
 data/explore/
+
+# Jev review files hold item names from the user's receipts
+data/jev_review/
