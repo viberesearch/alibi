@@ -256,8 +256,8 @@ class TestMigrationUp:
 
     def test_migrate_up(self, v1_conn: sqlite3.Connection) -> None:
         applied = migrate_up(v1_conn)
-        assert applied == 44  # migrations 002-045 (44 files, no 001)
-        assert get_current_version(v1_conn) == 45
+        assert applied == 45  # migrations 002-046 (45 files, no 001)
+        assert get_current_version(v1_conn) == 46
 
     def test_migrate_up_idempotent(self, v1_conn: sqlite3.Connection) -> None:
         migrate_up(v1_conn)
@@ -309,9 +309,9 @@ class TestMigrationUp:
 class TestMigrationDown:
     def test_migrate_down(self, v1_conn: sqlite3.Connection) -> None:
         migrate_up(v1_conn)
-        assert get_current_version(v1_conn) == 45
+        assert get_current_version(v1_conn) == 46
         reverted = migrate_down(v1_conn, target=1)
-        assert reverted == 44  # reverts 045-002
+        assert reverted == 45  # reverts 046-002
         assert get_current_version(v1_conn) == 1
 
     def test_v1_tables_restored_after_down(self, v1_conn: sqlite3.Connection) -> None:
@@ -333,8 +333,8 @@ class TestMigrationDown:
         migrate_up(v1_conn)
         migrate_down(v1_conn, target=1)
         applied = migrate_up(v1_conn)
-        assert applied == 44  # re-applies 002-045
-        assert get_current_version(v1_conn) == 45
+        assert applied == 45  # re-applies 002-046
+        assert get_current_version(v1_conn) == 46
 
 
 class TestAutoMigrate:
@@ -351,7 +351,7 @@ class TestAutoMigrate:
 class TestFreshInstall:
     def test_fresh_install_schema_version(self, db_manager: DatabaseManager) -> None:
         db_manager.initialize()
-        assert db_manager.get_schema_version() == 45
+        assert db_manager.get_schema_version() == 46
 
     def test_fresh_install_has_all_tables(self, db_manager: DatabaseManager) -> None:
         db_manager.initialize()

@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS fact_items (
     tax_rate DECIMAL(5,2),
     tax_type TEXT DEFAULT 'none',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-, barcode TEXT, unit_quantity DECIMAL(10,3), enrichment_source TEXT, enrichment_confidence REAL, comparable_name TEXT, product_variant TEXT DEFAULT NULL, category_path TEXT DEFAULT NULL, attributes JSON DEFAULT NULL, unit_enriched INTEGER DEFAULT NULL, comparable_name_enriched INTEGER DEFAULT NULL, category_taxonomy_version INTEGER DEFAULT NULL, state_enriched INTEGER DEFAULT NULL);
+, barcode TEXT, unit_quantity DECIMAL(10,3), enrichment_source TEXT, enrichment_confidence REAL, comparable_name TEXT, product_variant TEXT DEFAULT NULL, category_path TEXT DEFAULT NULL, attributes JSON DEFAULT NULL, unit_enriched INTEGER DEFAULT NULL, comparable_name_enriched INTEGER DEFAULT NULL, category_taxonomy_version INTEGER DEFAULT NULL, state_enriched INTEGER DEFAULT NULL, category_reviewed_by TEXT DEFAULT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_fact_items_fact ON fact_items(fact_id);
 
@@ -506,3 +506,4 @@ INSERT OR IGNORE INTO schema_version (version) VALUES (42);
 INSERT OR IGNORE INTO schema_version (version) VALUES (43);
 INSERT OR IGNORE INTO schema_version (version) VALUES (44);
 INSERT OR IGNORE INTO schema_version (version) VALUES (45);
+INSERT OR IGNORE INTO schema_version (version) VALUES (46);

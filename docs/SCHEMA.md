@@ -176,6 +176,7 @@ Denormalized line items for fast queries and analytics. Key fields for deep anal
 | `enrichment_confidence` | Confidence score (0.0-1.0) |
 | `unit_enriched` / `comparable_name_enriched` / `state_enriched` | Idempotency sentinels (0/1): mark a row the enrichment pass has processed — including an answered "no value" — so unsolvable rows are not re-sent to the LLM every run |
 | `category_taxonomy_version` | Taxonomy version a row was categorized under; a `TAXONOMY_VERSION` bump re-selects it |
+| `category_reviewed_by` | Jev review marker `<model>@t<TAXONOMY_VERSION>` (migration 046); a new pinned model or taxonomy version re-selects the row |
 
 ### item_stars
 Materialised analytics mirror (migration 039) — one row per `fact_item`, denormalising the item's analytic axes together with its parent fact's `vendor` / `vendor_key` / `currency` / `country` / `event_date` / `event_time`. The "item as star" surface (average comparable unit price by product across vendors/countries/periods, price trends, basket composition) reads this table so those aggregations need no per-call joins.
