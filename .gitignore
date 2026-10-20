@@ -102,3 +102,5 @@ data/explore/
 
 # Jev review files hold item names from the user's receipts
 data/jev_review/
+# Coherence-audit review file (lt enrich audit-coherence) holds item names from receipts
+data/_coherence_audit_findings.yaml
