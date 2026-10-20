@@ -475,6 +475,14 @@ class TestExtractUnitFromName:
         assert r[1] == UnitType.GRAM
         assert r[3] == Decimal("500")
 
+    def test_bilingual_slash_name_kept(self) -> None:
+        """LIDL "GREEK 500G/ENGLISH": the English after the slash is kept."""
+        r = _extract_unit_from_name("MYPTIAA 500G/BLUEBERRIES")
+        assert r is not None
+        assert r[1] == UnitType.GRAM
+        assert r[2] == "MYPTIAA BLUEBERRIES"
+        assert r[3] == Decimal("500")
+
     def test_bare_number_not_common(self) -> None:
         r = _extract_unit_from_name("Widget 42")
         assert r is None

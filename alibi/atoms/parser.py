@@ -796,8 +796,13 @@ def _extract_unit_from_name(
         unit_type = normalize_unit(unit_str)
         if unit_type != UnitType.OTHER:
             clean = name[: match.start()].strip().rstrip("-").strip()
-            if not clean:
-                clean = name[match.end() :].strip()
+            after = name[match.end() :].strip()
+            # Bilingual "NAME 500G/ENGLISH NAME" (LIDL Cyprus): keep the part
+            # after the slash, it is often the only readable name.
+            if after.startswith("/"):
+                clean = f"{clean} {after[1:].strip()}".strip()
+            elif not clean:
+                clean = after
             return unit_str, unit_type, clean, Decimal(qty_str)
 
     match = _TRAILING_UNIT_PATTERN.search(name)

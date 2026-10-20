@@ -16,6 +16,7 @@ Multilingual support: EN, DE, EL, RU markers for totals, tax, discounts.
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -727,6 +728,27 @@ _BARCODE_PREFIX_PATTERN = re.compile(r"^Barcode\s*:\s*(\d{7,14})\s*$", re.IGNORE
 
 # Standalone EAN barcode: exactly 8 or 13 digits on their own line
 _STANDALONE_BARCODE_PATTERN = re.compile(r"^\s*(\d{8}|\d{13})\s*$")
+
+# Quantity detail under an item: "2 x 3,85" (count times unit price). The
+# OCR may read the Latin x as Greek chi.
+_COUNT_X_PRICE_PATTERN = re.compile(
+    r"^(\d{1,3})\s*[x×Χχ]\s*(\d+[.,]\d{2})\s*['’`.,]?\s*$"
+)
+
+# A price-only line ("24,55 B"): in two-line layouts the item name is the line
+# above it.
+_BARE_PRICE_LINE_PATTERN = re.compile(r"^\s*\d+[.,]\d{2}\s*(?:T[0-9Z]|[A-EА-В])?\s*$")
+_HEADER_LINE_PATTERN = re.compile(r"\b(?:vat|tic|afm|αφμ|τηλ|tel)\b", re.IGNORECASE)
+
+# Greek "ΣΥΝΟΛΟ" (total) as OCR prints it: Latin look-alikes mixed in, and
+# Λ read as Α, Δ or Latin D, Σ read as Ε ("ΣΥΝΟΛO", "ΣYNOAO", "ΣYNDAO",
+# "ΕΥΝΟΔΑ"). Matched on the
+# line start after mapping Latin look-alikes to Greek and dropping accents.
+_LATIN_TO_GREEK = str.maketrans("abehikmnoptxyz", "αβεηικμνορτχυζ")
+_GREEK_TOTAL_OCR_PATTERN = re.compile(r"^[σε]υν[οd][λδαd][οα](?![^\W\d_])")
+
+# Weight line whose leading zero OCR read as a letter: "Q.666 kg x 5,95".
+_OCR_ZERO_WEIGHT_PATTERN = re.compile(r"^[QOoОΟ](?=[.,]\d+\s*k?g\b)", re.IGNORECASE)
 
 # Per-item discount line printed under the item it reduces, e.g. LIDL's
 # "Extremo -0,70": a short label with no digits, then a minus sign directly
@@ -2236,6 +2258,27 @@ def _extract_line_items(
             i += 1
             continue
 
+        # Per-item discount line: reduce the item above instead of adding a
+        # "+0.70" item (the minus sign was otherwise lost). Checked before the
+        # non-item skip: "Price change -0,48" contains the payment word "change".
+        disc_match = _ITEM_DISCOUNT_LINE_PATTERN.match(line)
+        if disc_match and items and len(disc_match.group("label").split()) <= 3:
+            amount = _parse_decimal(disc_match.group("amount"))
+            last = items[-1]
+            if amount is not None and last.get("total_price") is not None:
+                last["total_price"] = round(last["total_price"] - amount, 2)
+                last["discount_amount"] = round(
+                    (last.get("discount_amount") or 0) + amount, 2
+                )
+            i += 1
+            continue
+
+        # A Greek total line ends the items even when the non-item check
+        # below would match it first (it would then be skipped, and the
+        # footer appended to the last item's name).
+        if _is_greek_total_line(line):
+            break
+
         # Skip lines that are clearly not items (must come BEFORE total
         # marker check — column headers like "Name Quantity Price Subtotal"
         # contain the word "subtotal" and would falsely break the loop)
@@ -2269,17 +2312,15 @@ def _extract_line_items(
             i += 1
             continue
 
-        # Per-item discount line: reduce the item above instead of adding a
-        # "+0.70" item (the minus sign was otherwise lost).
-        disc_match = _ITEM_DISCOUNT_LINE_PATTERN.match(line)
-        if disc_match and items and len(disc_match.group("label").split()) <= 3:
-            amount = _parse_decimal(disc_match.group("amount"))
+        # Quantity detail line ("2 x 3,85"): count and unit price of the item
+        # above. Its printed line total stays authoritative.
+        count_match = _COUNT_X_PRICE_PATTERN.match(line)
+        if count_match and items:
             last = items[-1]
-            if amount is not None and last.get("total_price") is not None:
-                last["total_price"] = round(last["total_price"] - amount, 2)
-                last["discount_amount"] = round(
-                    (last.get("discount_amount") or 0) + amount, 2
-                )
+            last["quantity"] = int(count_match.group(1))
+            last["unit_price"] = _parse_decimal(count_match.group(2))
+            if last.get("total_price") is None and last["unit_price"] is not None:
+                last["total_price"] = round(last["quantity"] * last["unit_price"], 2)
             i += 1
             continue
 
@@ -2306,6 +2347,7 @@ def _extract_line_items(
             continue
 
         # Try weighed/multi-qty pattern (Qty W @ P each, no trailing total)
+        line = _OCR_ZERO_WEIGHT_PATTERN.sub("0", line)
         weighed_match = _WEIGHED_PATTERN.search(line)
         if not weighed_match:
             weighed_match = _WEIGHED_NO_QTY_PATTERN.search(line)
@@ -2725,8 +2767,13 @@ def _find_item_start(lines: list[str]) -> int:
         stripped = line.strip()
         if not stripped:
             continue
-        # First line with a price-like pattern
+        # First line with a price-like pattern. A price-only line belongs to
+        # the item name on the line above (two-line layout), so start there.
         if _PRICE_PATTERN.search(stripped) and not _is_total_marker(stripped):
+            if _BARE_PRICE_LINE_PATTERN.match(stripped):
+                prev = _previous_nonempty(lines, i)
+                if prev is not None and _is_item_name_line(lines[prev]):
+                    return prev
             return i
         # Barcode prefix line also marks item section start
         if _BARCODE_PREFIX_PATTERN.match(stripped):
@@ -2736,6 +2783,27 @@ def _find_item_start(lines: list[str]) -> int:
         if sb and _is_valid_ean(sb.group(1)):
             return i
     return 0
+
+
+def _previous_nonempty(lines: list[str], i: int) -> int | None:
+    """Index of the closest non-empty line before ``i``."""
+    for j in range(i - 1, -1, -1):
+        if lines[j].strip():
+            return j
+    return None
+
+
+def _is_item_name_line(line: str) -> bool:
+    """A line that can be an item name: some letters, no price, no header data."""
+    stripped = line.strip()
+    if sum(ch.isalpha() for ch in stripped) < 4:
+        return False
+    return not (
+        _PRICE_PATTERN.search(stripped)
+        or _is_total_marker(stripped)
+        or _is_non_item_line(stripped)
+        or _HEADER_LINE_PATTERN.search(stripped)
+    )
 
 
 def _find_footer_start(lines: list[str], body_start: int) -> int:
@@ -2794,7 +2862,16 @@ def _is_total_marker(line: str) -> bool:
     for marker in _TOTAL_MARKERS:
         if marker in low:
             return True
-    return False
+    return _is_greek_total_line(line)
+
+
+def _is_greek_total_line(line: str) -> bool:
+    """A line starting with ΣΥΝΟΛΟ as OCR prints it (see _GREEK_TOTAL_OCR_PATTERN)."""
+    low = line.strip().lower().translate(_LATIN_TO_GREEK)
+    greek = "".join(
+        ch for ch in unicodedata.normalize("NFD", low) if not unicodedata.combining(ch)
+    )
+    return bool(_GREEK_TOTAL_OCR_PATTERN.match(greek))
 
 
 def _is_non_item_line(line: str) -> bool:

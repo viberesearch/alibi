@@ -505,6 +505,90 @@ class TestExtractLineItems:
         assert not any("TICKET" in n for n in names), f"TICKET found in items: {names}"
         assert len(items) == 2
 
+    @pytest.mark.parametrize(
+        "total_line", ["ΣYNOAO 41,28", "ΣΥΝΟΛO 41,28", "ΕΥΝΟΔΑ 41,28", "ΣYNDAO 41,28"]
+    )
+    def test_greek_total_ocr_variants_end_items(self, total_line):
+        """OCR-garbled ΣΥΝΟΛΟ stops the item list; the footer is not an item."""
+        text = (
+            "LIDL Cyprus\n"
+            "MYPTIAA 500G/BLUEBERRIES 4,79 B\n"
+            "ΦРЕΣΚΟ VAAA 1L/FR. MILK 1,48 B\n"
+            f"{total_line}\n"
+            "KAPTA 41,28\n"
+            "Εγγραφείτε στο Lidl Plus και\n"
+            "B 5 % 1,85 37,10 38,95\n"
+        )
+        items = parse_ocr_text(text, doc_type="receipt").data["line_items"]
+        assert [i["name"] for i in items] == [
+            "MYPTIAA 500G/BLUEBERRIES",
+            "ΦРЕΣΚΟ VAAA 1L/FR. MILK",
+        ]
+
+    def test_two_line_layout_keeps_first_item(self):
+        """When prices sit on their own line, the first item's name is kept."""
+        text = (
+            "LIDL Cyprus\n"
+            "VAT No. 300108234 TIC No. 33010823D\n"
+            "EUR\n"
+            "XTATOA1 TI 395/60/OCTOPUS\n"
+            "24,55 B\n"
+            "KD DIETETI TZWN/20M\n"
+            "2,19 B\n"
+            "ΣΥΝΟΛΟ 26,74\n"
+        )
+        items = parse_ocr_text(text, doc_type="receipt").data["line_items"]
+        assert [(i["name"], i["total_price"]) for i in items] == [
+            ("XTATOA1 TI 395/60/OCTOPUS", 24.55),
+            ("KD DIETETI TZWN/20M", 2.19),
+        ]
+
+    def test_count_times_price_line_sets_quantity(self):
+        """ "2 x 1,25" under an item is its quantity, not a new item."""
+        text = (
+            "LIDL Cyprus\n"
+            "ΣAA. LOLLO ITEM./LOLLO SAL. 2,50 B\n"
+            "2 x 1,25\n"
+            "MYPTIAA 500G/BLUEBERRIES 14,37 B\n"
+            "3 × 4,79\n"
+            "ΣΥΝΟΛΟ 16,87\n"
+        )
+        items = parse_ocr_text(text, doc_type="receipt").data["line_items"]
+        assert [(i["quantity"], i["unit_price"], i["total_price"]) for i in items] == [
+            (2, 1.25, 2.5),
+            (3, 4.79, 14.37),
+        ]
+
+    def test_price_change_line_is_a_discount(self):
+        """LIDL "Price change -0,48" reduces the item above it."""
+        text = (
+            "LIDL Cyprus\n"
+            "KOYMOVE 250G/HUMMUS 1,88 B\n"
+            "Price change -0,48\n"
+            "ΣΥΝΟΛΟ 1,40\n"
+        )
+        items = parse_ocr_text(text, doc_type="receipt").data["line_items"]
+        assert [(i["total_price"], i["discount_amount"]) for i in items] == [
+            (1.4, 0.48)
+        ]
+
+    def test_weight_line_with_letter_for_zero(self):
+        """ "Q.666 kg x 5,95" is the weight of the item above, not an item."""
+        text = (
+            "LIDL Cyprus\n"
+            "ΦT.KOT.BBQ KG/BBQ WING 3,96 B\n"
+            "Q.666 kg × 5,95 EUR/kg\n"
+            "NO.M.KO.X.K.650G/CHICK.TIC 5,79 B\n"
+            "ΣΥΝΟΛΟ 9,75\n"
+        )
+        items = parse_ocr_text(text, doc_type="receipt").data["line_items"]
+        assert [
+            (i["name"], i["total_price"], i.get("unit_quantity")) for i in items
+        ] == [
+            ("ΦT.KOT.BBQ KG/BBQ WING", 3.96, 0.666),
+            ("NO.M.KO.X.K.650G/CHICK.TIC", 5.79, None),
+        ]
+
     def test_discount_line_reduces_item_above(self):
         """LIDL's "Extremo -0,70" is a discount on the item above, not an item."""
         text = (
