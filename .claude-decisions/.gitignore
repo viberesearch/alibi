@@ -1,0 +1,10 @@
+# Decision Traces - Raw traces are local only
+# Promoted patterns become permanent documentation
+
+# Don't sync raw traces to GitHub
+traces/
+pending-review/
+
+# DO sync patterns and documentation
+!README.md
+!local-patterns.md

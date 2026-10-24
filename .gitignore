@@ -104,3 +104,9 @@ data/explore/
 data/jev_review/
 # Coherence-audit review file (lt enrich audit-coherence) holds item names from receipts
 data/_coherence_audit_findings.yaml
+
+# Claude Code local files and machine-specific MCP config (.mcp.json.silicon or .mcp.json.intel templates)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/*.local.*
+.mcp.json
