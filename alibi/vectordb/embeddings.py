@@ -17,6 +17,11 @@ OLLAMA_RETRY_EXCEPTIONS = (httpx.TimeoutException, httpx.ConnectError)
 # vector index (`lt vectordb init`): vectors from different models do not mix.
 EMBEDDING_DIM = 1024
 EMBEDDING_MODEL = "qwen3-embedding:0.6b"
+# Context Ollama loads the model with. The default 32k keeps 4.8 GB resident;
+# 4096 is 1.2 GB with identical vectors for alibi's inputs (longest 1,946
+# tokens). Other clients of the same Ollama server should send the same value:
+# a request with another num_ctx reloads the model.
+EMBEDDING_NUM_CTX = 4096
 
 
 class EmbeddingError(Exception):
@@ -48,9 +53,9 @@ def get_embedding(
     config = get_config()
     ollama_url = ollama_url or config.ollama_url
 
-    # Cap payload size as a safety bound. qwen3-embedding has a 32k-token
-    # context; the /api/embed call below sets truncate=true so Ollama truncates
-    # server-side to the context window rather than erroring on overflow.
+    # Cap payload size as a safety bound. The /api/embed call below sets
+    # truncate=true so Ollama truncates server-side to num_ctx tokens rather
+    # than erroring on overflow.
     truncated_text = text[:6000]
 
     result = _call_ollama_embedding(ollama_url, model, truncated_text, timeout)
@@ -88,6 +93,7 @@ def _call_ollama_embedding(
                     "model": model,
                     "input": text,
                     "truncate": True,
+                    "options": {"num_ctx": EMBEDDING_NUM_CTX},
                 },
             )
             response.raise_for_status()
@@ -157,6 +163,7 @@ async def _call_ollama_embedding_async(
                     "model": model,
                     "input": text,
                     "truncate": True,
+                    "options": {"num_ctx": EMBEDDING_NUM_CTX},
                 },
             )
             response.raise_for_status()

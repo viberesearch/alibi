@@ -81,6 +81,22 @@ class TestEmbeddings:
             with pytest.raises(EmbeddingError):
                 get_embedding("test", ollama_url="http://invalid:11434")
 
+    def test_get_embedding_sends_num_ctx(self) -> None:
+        """The model loads with EMBEDDING_NUM_CTX, not Ollama's 32k default."""
+        from alibi.vectordb.embeddings import EMBEDDING_NUM_CTX
+
+        with patch("alibi.vectordb.embeddings.httpx.Client") as mock_client:
+            mock_instance = MagicMock()
+            mock_client.return_value.__enter__.return_value = mock_instance
+            mock_instance.post.return_value.json.return_value = {
+                "embeddings": [[0.0] * EMBEDDING_DIM]
+            }
+
+            get_embedding("test", ollama_url="http://localhost:11434")
+
+        payload = mock_instance.post.call_args.kwargs["json"]
+        assert payload["options"] == {"num_ctx": EMBEDDING_NUM_CTX}
+
 
 class TestVectorIndex:
     """Tests for VectorIndex class."""
