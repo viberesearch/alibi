@@ -2320,9 +2320,9 @@ def vectordb_init(space: str, rebuild: bool) -> None:
         except Exception as e:
             console.print(f"\n[red]Error building index:[/red] {e}")
             console.print(
-                "\nMake sure Ollama is running with the nomic-embed-text-v2-moe model:"
+                "\nMake sure Ollama is running with the qwen3-embedding:0.6b model:"
             )
-            console.print("  ollama pull nomic-embed-text-v2-moe")
+            console.print("  ollama pull qwen3-embedding:0.6b")
             console.print("  ollama serve")
             raise click.Abort() from e
 
@@ -2400,7 +2400,7 @@ def vectordb_search(query_text: str, limit: int, entity_type: str) -> None:
         )
     except Exception as e:
         console.print(f"[red]Search error:[/red] {e}")
-        console.print("\nMake sure Ollama is running with nomic-embed-text-v2-moe.")
+        console.print("\nMake sure Ollama is running with qwen3-embedding:0.6b.")
         raise click.Abort() from e
 
     if not results:

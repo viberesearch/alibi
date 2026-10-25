@@ -1,4 +1,4 @@
-name: Fleet CI
+name: CI
 
 on:
   push:

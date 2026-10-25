@@ -74,8 +74,6 @@ data/lancedb/
 *.log
 
 
-# Claude Code local settings (keep commands/ tracked)
-.claude/*
 
 # Machine-specific MCP config (use .mcp.json.silicon or .mcp.json.intel templates)
 .mcp.json

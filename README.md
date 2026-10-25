@@ -501,7 +501,7 @@ Build your own receiver with any framework (FastAPI, Express, etc.) and store in
 
 ### Vector Search (LanceDB)
 
-Optional semantic search across documents, facts, and items using `nomic-embed-text-v2-moe` embeddings via Ollama.
+Optional semantic search across documents, facts, and items using `qwen3-embedding:0.6b` embeddings via Ollama.
 
 ```bash
 # Install vector dependencies
