@@ -448,7 +448,7 @@ Scenario-based budgeting with actual-vs-target variance tracking (`alibi/budgets
 
 Optional LanceDB-powered semantic search (`alibi/vectordb/`):
 
-- **Embeddings**: Ollama `nomic-embed-text-v2-moe` (768 dimensions, 512-token context)
+- **Embeddings**: Ollama `qwen3-embedding:0.6b` (1024 dimensions, 32k-token context)
 - **Index types**: transactions, artifacts, items
 - **Search modes**: SQL LIKE, vector similarity, unified (combined with deduplication)
 - CLI: `lt vectordb init/status/search`, API: `GET /api/v1/search?semantic=true`

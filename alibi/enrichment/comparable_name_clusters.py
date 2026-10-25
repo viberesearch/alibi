@@ -7,7 +7,8 @@ synonyms, singular/plural, translations and OCR garble ("fr. goat milk" vs
 "goat milk", "artichoke" vs "artichokes"). Those never share a substring the
 regex can strip, so they stay in separate analytics buckets.
 
-This pass embeds each distinct ``comparable_name`` with the local nomic model,
+This pass embeds each distinct ``comparable_name`` with the local qwen3 embedding
+model (with a same-product instruction, see ``SAME_PRODUCT_INSTRUCTION``),
 clusters near-duplicates *within the same comparable_unit* above a high cosine
 threshold, and emits a PROPOSAL file. Nothing is rewritten until a human flips
 ``approved: true`` on a cluster and runs the apply step -- a wrong merge fuses
@@ -43,10 +44,21 @@ logger = logging.getLogger(__name__)
 
 # A deliberately HIGH default: this pass proposes merges that a human then
 # reviews, but the cost of a noisy proposal is reviewer fatigue, so we keep the
-# candidate set tight. 0.92 cosine on nomic-embed reliably pairs singular/plural
-# and close synonyms while leaving distinct products (e.g. "apple" vs "apricot")
-# apart.
-DEFAULT_THRESHOLD = 0.92
+# candidate set tight. Calibrated 2026-10-25 on the 765 live names (147k
+# same-unit pairs; 23 known same-product pairs, 44 distinct sibling products):
+# at 0.95 qwen3-embedding:0.6b with the instruction below proposed 29 pairs,
+# found 18/23 known duplicates and none of the 44 siblings (nomic at the old
+# 0.92: 12 pairs, 12/23). Without the instruction qwen3 scores siblings such as
+# "black olives" / "green olives" (0.97) above word-order variants, so no
+# threshold works. Below ~0.95, generic-vs-specific and preparation variants
+# ("butter" / "salted butter", "calamari" / "fried calamari") appear.
+DEFAULT_THRESHOLD = 0.95
+
+# Qwen3-Embedding takes a task instruction; both sides of every pair get it.
+SAME_PRODUCT_INSTRUCTION = (
+    "Instruct: Given a grocery or shop item name, find names of the very same "
+    "product, ignoring word order, plural and spelling variants\nQuery: "
+)
 
 # How many example raw item names to show per variant in the proposal.
 _DEFAULT_EXAMPLES = 3
@@ -122,7 +134,8 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 def _default_embed_fn(text: str) -> list[float]:
-    """Embed via the local nomic model, falling back to a zero vector on error.
+    """Embed via the local qwen3 model with the same-product instruction,
+    falling back to a zero vector on error.
 
     A zero vector is similar to nothing (cosine 0), so an item whose embedding
     failed can never be merged -- it stays in its own bucket rather than risk a
@@ -131,7 +144,7 @@ def _default_embed_fn(text: str) -> list[float]:
     from alibi.vectordb.embeddings import EMBEDDING_DIM, EmbeddingError, get_embedding
 
     try:
-        return get_embedding(text)
+        return get_embedding(SAME_PRODUCT_INSTRUCTION + text)
     except EmbeddingError as exc:  # pragma: no cover - network path
         logger.warning("Embedding failed for %r: %s (zero-vector fallback)", text, exc)
         return [0.0] * EMBEDDING_DIM
@@ -219,7 +232,7 @@ def propose_name_merges(
     Args:
         db: Database manager.
         threshold: Cosine similarity above which two names are clustered.
-        embed_fn: Embedding function (defaults to the local nomic model). Tests
+        embed_fn: Embedding function (defaults to the local qwen3 model). Tests
             inject a deterministic fake.
         examples: Example raw item names to attach per variant.
 

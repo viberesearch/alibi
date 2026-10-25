@@ -164,8 +164,8 @@ class VectorIndex:
             if vendor:
                 parts.append(f"vendor: {vendor}")
             if raw_text:
-                # nomic-embed-text-v2-moe context is 512 tokens; the embed
-                # call truncates server-side (truncate=true), so cap here only
+                # The embed call truncates to the model context server-side
+                # (truncate=true), so cap here only
                 # to bound payload size for structured text.
                 parts.append(raw_text[:2500])
 

@@ -1,4 +1,4 @@
-"""Embedding generation using Ollama nomic-embed-text-v2-moe."""
+"""Embedding generation using Ollama qwen3-embedding:0.6b."""
 
 import logging
 from typing import Any, Callable, cast
@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 # Retry configuration for Ollama API calls
 OLLAMA_RETRY_EXCEPTIONS = (httpx.TimeoutException, httpx.ConnectError)
 
-# nomic-embed-text-v2-moe dimensions (Matryoshka default: 768)
-EMBEDDING_DIM = 768
-EMBEDDING_MODEL = "nomic-embed-text-v2-moe"
+# qwen3-embedding:0.6b dimensions. Changing the model means rebuilding the
+# vector index (`lt vectordb init`): vectors from different models do not mix.
+EMBEDDING_DIM = 1024
+EMBEDDING_MODEL = "qwen3-embedding:0.6b"
 
 
 class EmbeddingError(Exception):
@@ -35,11 +36,11 @@ def get_embedding(
     Args:
         text: Text to embed
         ollama_url: Ollama API URL (defaults to config)
-        model: Embedding model (default: nomic-embed-text-v2-moe)
+        model: Embedding model (default: qwen3-embedding:0.6b)
         timeout: Request timeout in seconds
 
     Returns:
-        Embedding vector as list of floats (768 dimensions)
+        Embedding vector as list of floats (1024 dimensions)
 
     Raises:
         EmbeddingError: If embedding generation fails
@@ -47,7 +48,7 @@ def get_embedding(
     config = get_config()
     ollama_url = ollama_url or config.ollama_url
 
-    # Cap payload size as a safety bound. nomic-embed-text-v2-moe has a 512-token
+    # Cap payload size as a safety bound. qwen3-embedding has a 32k-token
     # context; the /api/embed call below sets truncate=true so Ollama truncates
     # server-side to the context window rather than erroring on overflow.
     truncated_text = text[:6000]
@@ -110,11 +111,11 @@ async def get_embedding_async(
     Args:
         text: Text to embed
         ollama_url: Ollama API URL (defaults to config)
-        model: Embedding model (default: nomic-embed-text-v2-moe)
+        model: Embedding model (default: qwen3-embedding:0.6b)
         timeout: Request timeout in seconds
 
     Returns:
-        Embedding vector as list of floats (768 dimensions)
+        Embedding vector as list of floats (1024 dimensions)
 
     Raises:
         EmbeddingError: If embedding generation fails

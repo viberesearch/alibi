@@ -10,9 +10,11 @@ os.environ["ALIBI_TESTING"] = "1"
 import pytest
 
 from alibi.enrichment.comparable_name_clusters import (
+    SAME_PRODUCT_INSTRUCTION,
     MergeCluster,
     NameStat,
     _cosine,
+    _default_embed_fn,
     apply_name_merges,
     load_approved_clusters,
     propose_name_merges,
@@ -117,6 +119,21 @@ class TestCosine:
 # ===========================================================================
 # Propose
 # ===========================================================================
+
+
+class TestDefaultEmbed:
+    def test_sends_same_product_instruction(self, monkeypatch):
+        sent: list[str] = []
+
+        def fake_get_embedding(text: str) -> list[float]:
+            sent.append(text)
+            return [1.0, 0.0]
+
+        monkeypatch.setattr(
+            "alibi.vectordb.embeddings.get_embedding", fake_get_embedding
+        )
+        assert _default_embed_fn("tomatoes") == [1.0, 0.0]
+        assert sent == [SAME_PRODUCT_INSTRUCTION + "tomatoes"]
 
 
 class TestPropose:
