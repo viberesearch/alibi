@@ -249,7 +249,7 @@ class ArtifactNoteExporter:
                 import json
 
                 extracted_data = json.loads(raw)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 extracted_data = {}
 
         # Get linked fact data via bundle/cloud chain

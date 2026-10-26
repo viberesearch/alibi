@@ -121,7 +121,7 @@ def parse_number(value: Any) -> float | None:
 
     try:
         return float(s) * multiplier
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 

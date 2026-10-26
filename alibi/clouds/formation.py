@@ -279,7 +279,7 @@ def extract_bundle_summary(
             if data.get("semantic_type") == "total":
                 try:
                     summary.amount = Decimal(str(data["value"]))
-                except (InvalidOperation, ValueError, KeyError):
+                except InvalidOperation, ValueError, KeyError:
                     pass
                 summary.currency = normalize_currency(data.get("currency", "EUR"))
 

@@ -97,7 +97,7 @@ def _load_location_facts(db: Any) -> list[dict[str, Any]]:
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 continue
         # Skip locations without usable coordinates (place-name-only annotations
         # from modern Google share links carry lat/lng = None) — distance-based

@@ -69,7 +69,7 @@ def lookup_cached_product(db: DatabaseManager, barcode: str) -> dict[str, str] |
         return None
     try:
         data: dict[str, object] = json.loads(row["data"])
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
     if data.get("_not_found"):
         return None

@@ -657,7 +657,7 @@ def _safe_date_groups(
             return None, "a basket has no date"
         try:
             parsed.append(_date.fromisoformat(ds))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None, f"unparseable date {ds!r}"
     distinct = sorted(set(parsed))
     if len(distinct) < 2:

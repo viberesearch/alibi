@@ -60,7 +60,7 @@ class MaskingService:
                 if isinstance(val, str):
                     try:
                         val = date.fromisoformat(val)
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         continue
                 if isinstance(val, date):
                     masked[field] = policy.mask_date(val)

@@ -450,7 +450,7 @@ def update_fact_item(
                 continue
             try:
                 fields[nf] = float(str(v))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 fields[nf] = None
 
     # Normalize category to title case for consistency

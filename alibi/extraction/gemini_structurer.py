@@ -621,7 +621,7 @@ def _parse_batch_response(
                         results[idx] = extraction
         return results
 
-    except (json.JSONDecodeError, ValueError, KeyError):
+    except json.JSONDecodeError, ValueError, KeyError:
         logger.exception("Failed to parse Gemini batch response")
         return results
 

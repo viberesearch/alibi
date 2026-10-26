@@ -66,7 +66,7 @@ class _CaptureHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         try:
             self.received.append(json.loads(body))
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             self.received.append({"_raw": body.decode("utf-8", errors="replace")})
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

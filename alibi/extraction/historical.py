@@ -481,7 +481,7 @@ def apply_historical_corrections(
                     f"Historical: product name corrected "
                     f"'{correction.original}' → '{correction.suggested}'"
                 )
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             pass
 
     result.products_matched = products_matched

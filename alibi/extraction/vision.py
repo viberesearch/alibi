@@ -812,7 +812,7 @@ def _extraction_quality(extracted: dict[str, Any], ocr_text: str) -> float:
     def _f(v: Any) -> float | None:
         try:
             return float(v)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     total = _f(

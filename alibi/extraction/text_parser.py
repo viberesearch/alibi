@@ -2680,7 +2680,7 @@ def _strip_leading_quantities(items: list[dict[str, Any]]) -> None:
             if tp is not None:
                 try:
                     item["unit_price"] = round(float(tp) / candidate_qty, 2)
-                except (TypeError, ZeroDivisionError):
+                except TypeError, ZeroDivisionError:
                     pass
 
 

@@ -70,7 +70,7 @@ def _round_price(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
 
 

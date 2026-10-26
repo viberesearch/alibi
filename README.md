@@ -77,7 +77,7 @@ If the extraction got something wrong, you edit the YAML (it is designed to be h
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.14
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - [Ollama](https://ollama.ai/) with the `glm-ocr` model
 
@@ -152,7 +152,7 @@ Service Layer (alibi/services/ — 13 facades, ~88 functions)
   +---> Event Bus -> Obsidian notes, webhooks, analytics export
 ```
 
-**Stack**: Python 3.12, FastAPI, SQLite, Ollama, pydantic-settings, httpx, Pillow.
+**Stack**: Python 3.14, FastAPI, SQLite, Ollama, pydantic-settings, httpx, Pillow.
 Optional: Google Gemini, Anthropic Claude, aiogram (Telegram), pyzbar (barcodes), lancedb (vectors).
 
 ### Stage 3: Local vs Cloud

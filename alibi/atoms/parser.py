@@ -324,7 +324,7 @@ def _parse_statement(
                         role=BundleAtomRole.TOTAL,
                     )
                 )
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
 
         # Date
@@ -458,7 +458,7 @@ def _parse_datetime_atom(document_id: str, raw: dict[str, Any]) -> Atom | None:
                 document_id[:8],
             )
             data["_suspicious_date"] = True
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         pass  # Non-ISO date formats handled downstream
 
     time_val = raw.get("time")
@@ -658,7 +658,7 @@ def _parse_item_atom(
     if "unit_quantity" not in data and llm_unit_quantity:
         try:
             data["unit_quantity"] = str(Decimal(str(llm_unit_quantity)))
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             pass
 
     # Extract unit_quantity from X<N> pattern (e.g., "X12" = pack of 12)
@@ -717,7 +717,7 @@ def _parse_item_atom(
             data["discount_percentage"] = str(
                 Decimal(str(raw_item["discount_percentage"]))
             )
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             pass
 
     # -- Fix weighed item errors --
@@ -914,7 +914,7 @@ def _fix_weighed_item_quantities(data: dict[str, Any]) -> None:
 
     try:
         quantity = Decimal(data.get("quantity", "1"))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return
 
     uq_raw = data.get("unit_quantity")
@@ -922,7 +922,7 @@ def _fix_weighed_item_quantities(data: dict[str, Any]) -> None:
     if uq_raw is not None:
         try:
             unit_quantity = Decimal(str(uq_raw))
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             pass
 
     # Case 1: conversion factor suspect
@@ -979,7 +979,7 @@ def _infer_weighed_from_price_math(data: dict[str, Any]) -> None:
         uq = Decimal(str(uq_raw))
         up = Decimal(str(data.get("unit_price", "0")))
         tp = Decimal(str(data.get("total_price", "0")))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return
 
     if uq <= 0 or up <= 0 or tp <= 0:
@@ -1007,7 +1007,7 @@ def _calculate_comparable_price(data: dict[str, Any]) -> None:
         quantity = Decimal(data.get("quantity", "1"))
         unit_str = data.get("unit")
         uq_raw = data.get("unit_quantity")
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return
 
     if not total_price or not quantity or quantity == 0 or not unit_str:
@@ -1022,7 +1022,7 @@ def _calculate_comparable_price(data: dict[str, Any]) -> None:
         try:
             unit_quantity = Decimal(str(uq_raw))
             total_content = quantity * unit_quantity if unit_quantity > 0 else quantity
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             total_content = quantity
     else:
         total_content = quantity

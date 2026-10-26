@@ -739,7 +739,7 @@ def _infer_date_format_from_correction(
     try:
         old_date = date.fromisoformat(old_iso)
         new_date = date.fromisoformat(new_iso)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
     if old_date == new_date:

@@ -369,7 +369,7 @@ def _extract_total(atoms: list[dict[str, Any]]) -> Decimal | None:
             if data.get("semantic_type") == "total":
                 try:
                     return Decimal(str(data["value"]))
-                except (InvalidOperation, ValueError, KeyError):
+                except InvalidOperation, ValueError, KeyError:
                     pass
     return None
 
@@ -384,7 +384,7 @@ def _extract_all_totals(atoms: list[dict[str, Any]]) -> list[Decimal]:
             if data.get("semantic_type") == "total":
                 try:
                     totals.append(Decimal(str(data["value"])))
-                except (InvalidOperation, ValueError, KeyError):
+                except InvalidOperation, ValueError, KeyError:
                     pass
     return totals
 
@@ -398,7 +398,7 @@ def _extract_payment_amounts(atoms: list[dict[str, Any]]) -> list[Decimal]:
             data = atom.get("data", {})
             try:
                 amounts.append(Decimal(str(data["amount"])))
-            except (InvalidOperation, ValueError, KeyError):
+            except InvalidOperation, ValueError, KeyError:
                 pass
     return amounts
 
@@ -481,7 +481,7 @@ def _payment_amount(p: dict[str, Any]) -> Decimal | None:
     """Parse a payment entry's amount to Decimal, or None if unparseable."""
     try:
         return Decimal(str(p["amount"]))
-    except (KeyError, TypeError, InvalidOperation):
+    except KeyError, TypeError, InvalidOperation:
         return None
 
 
@@ -602,14 +602,14 @@ def _extract_items(atoms: list[dict[str, Any]], currency: str) -> list[FactItem]
         # Quantity
         try:
             item.quantity = Decimal(str(data.get("quantity", "1")))
-        except (InvalidOperation, ValueError):
+        except InvalidOperation, ValueError:
             pass
 
         # Unit quantity (weight/volume per unit)
         if "unit_quantity" in data:
             try:
                 item.unit_quantity = Decimal(str(data["unit_quantity"]))
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
 
         # Unit
@@ -623,12 +623,12 @@ def _extract_items(atoms: list[dict[str, Any]], currency: str) -> list[FactItem]
         if "unit_price" in data:
             try:
                 item.unit_price = Decimal(str(data["unit_price"]))
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
         if "total_price" in data:
             try:
                 item.total_price = Decimal(str(data["total_price"]))
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
 
         # Metadata
@@ -640,7 +640,7 @@ def _extract_items(atoms: list[dict[str, Any]], currency: str) -> list[FactItem]
         if "comparable_unit_price" in data:
             try:
                 item.comparable_unit_price = Decimal(str(data["comparable_unit_price"]))
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
         if "comparable_unit" in data:
             try:
@@ -652,7 +652,7 @@ def _extract_items(atoms: list[dict[str, Any]], currency: str) -> list[FactItem]
         if "tax_rate" in data:
             try:
                 item.tax_rate = Decimal(str(data["tax_rate"]))
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
         if "tax_type" in data:
             try:

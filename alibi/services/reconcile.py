@@ -51,7 +51,7 @@ def _dec(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(str(value)).quantize(_CENT)
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
 
 
