@@ -90,7 +90,7 @@ def build_export_payload(db: DatabaseManager) -> dict[str, Any]:
                 continue
             try:
                 item[field] = float(v)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 item[field] = None
 
     annotations = get_annotations(db)
@@ -174,7 +174,7 @@ def push_to_analytics_stack(
             result["http_status"] = resp.status
             try:
                 result["response"] = json.loads(resp_body)
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 result["response"] = resp_body
     except (URLError, OSError) as exc:
         logger.warning("Analytics push failed: %s", exc)

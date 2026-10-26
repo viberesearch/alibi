@@ -87,7 +87,7 @@ def _load_state() -> SchedulerState:
         try:
             data = json.loads(_STATE_FILE.read_text())
             return SchedulerState.from_dict(data)
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except json.JSONDecodeError, KeyError, TypeError:
             logger.warning("Corrupt scheduler state file, resetting")
     return SchedulerState()
 
@@ -151,7 +151,7 @@ class EnrichmentScheduler:
             import fcntl
 
             fcntl.flock(self._lock_fh.fileno(), fcntl.LOCK_UN)
-        except (ImportError, OSError):  # pragma: no cover
+        except ImportError, OSError:  # pragma: no cover
             pass
         finally:
             self._lock_fh.close()

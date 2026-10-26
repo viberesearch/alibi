@@ -111,7 +111,7 @@ def _clean_size(unit_raw: Any, qty_raw: Any) -> tuple[str, Decimal] | None:
         return None
     try:
         qty = Decimal(str(qty_raw).replace(",", "."))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
     if qty <= 0 or qty >= Decimal("100000"):
         return None
@@ -191,7 +191,7 @@ def _dec(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
 
 

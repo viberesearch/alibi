@@ -515,7 +515,7 @@ class ProcessingPipeline:
                         )
                     if 1 <= d <= 31 and 1 <= m <= 12 and 2000 <= y <= 2099:
                         dates.append(date(y, m, d))
-                except (ValueError, OverflowError):
+                except ValueError, OverflowError:
                     continue
         return dates
 
@@ -753,7 +753,7 @@ class ProcessingPipeline:
             try:
                 stat = file_path.stat()
                 file_date = date.fromtimestamp(stat.st_mtime)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
 
         fixed = disambiguate_date(

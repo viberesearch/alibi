@@ -41,7 +41,7 @@ def _is_valid_ean(digits: str) -> bool:
             weight = 1 if i % 2 == 0 else 3
             total += int(ch) * weight
         return total % 10 == 0
-    except (ValueError, IndexError):
+    except ValueError, IndexError:
         return False
 
 

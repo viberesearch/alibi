@@ -76,7 +76,7 @@ class OFXParser:
                 try:
                     parsed = self._parse_transaction(txn, account_id, currency)
                     transactions.append(parsed)
-                except (ValueError, AttributeError):
+                except ValueError, AttributeError:
                     continue
 
         return transactions
@@ -162,5 +162,5 @@ def is_ofx_file(file_path: Path | str) -> bool:
         with path.open("rb") as f:
             header = f.read(100).decode("utf-8", errors="ignore").upper()
             return "OFXHEADER" in header or "<OFX>" in header
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return False

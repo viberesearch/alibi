@@ -170,5 +170,5 @@ def get_available_models(url: str | None = None) -> list[str]:
             data = response.json()
             models = data.get("models", [])
             return [m.get("name", "") for m in models if m.get("name")]
-    except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
+    except httpx.ConnectError, httpx.TimeoutException, httpx.RequestError:
         return []

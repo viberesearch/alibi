@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def _f(value: object) -> float:
     try:
         return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0
 
 

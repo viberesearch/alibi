@@ -54,7 +54,7 @@ def _doc_extraction_for_fact(db: DatabaseManager, fact_id: str) -> dict | None:
             continue
         try:
             data = json.loads(r["rx"])
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             continue
         if not isinstance(data, dict):
             continue

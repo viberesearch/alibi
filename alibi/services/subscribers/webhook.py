@@ -29,7 +29,7 @@ def _is_private_url(url: str) -> bool:
             ip = ipaddress.ip_address(addr)
             if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
                 return True
-    except (socket.gaierror, ValueError):
+    except socket.gaierror, ValueError:
         return True
     return False
 

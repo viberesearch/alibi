@@ -81,7 +81,7 @@ async def get_artifact(
     if raw:
         try:
             result["extracted_data"] = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             result["extracted_data"] = None
     return result
 

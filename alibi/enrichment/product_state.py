@@ -226,7 +226,7 @@ def _load_attributes(item: dict[str, Any]) -> dict[str, Any]:
         return dict(raw)
     try:
         parsed = json.loads(raw)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except TypeError, ValueError, json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
 

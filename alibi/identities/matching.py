@@ -326,7 +326,7 @@ def suggest_item_correction(
                     and pname.lower() not in {k.lower() for k in candidates}
                 ):
                     candidates[pname] = pname
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 continue
     except Exception:
         pass  # product_cache may not exist in all DBs

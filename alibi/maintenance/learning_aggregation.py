@@ -206,7 +206,7 @@ def mark_stale_templates(db: DatabaseManager, max_age_days: int = 90) -> int:
                     if last.tzinfo is None:
                         last = last.replace(tzinfo=timezone.utc)
                     is_old = last < cutoff
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     is_old = True
 
             if is_old:

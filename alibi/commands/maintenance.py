@@ -485,7 +485,7 @@ def _guess_vendor_for_barcode_fact(db_manager: DatabaseManager, fact_id: str) ->
             data = (
                 json.loads(atom_row[0]) if isinstance(atom_row[0], str) else atom_row[0]
             )
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             continue
         vendor: str = data.get("vendor", "")
         if vendor and not vendor.upper().startswith("BARCODE"):

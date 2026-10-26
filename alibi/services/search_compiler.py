@@ -121,7 +121,7 @@ def _is_iso_date(s: Any) -> bool:
     try:
         dt.date.fromisoformat(str(s)[:10])
         return True
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return False
 
 
@@ -190,7 +190,7 @@ def validate_plan(plan: dict[str, Any], context: dict[str, Any]) -> list[str]:
         if v is not None:
             try:
                 float(v)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 raise ValueError(f"filters.{key}={v!r} is not a number")
 
     limit = plan.get("limit", DEFAULT_LIMIT)

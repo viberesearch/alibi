@@ -137,7 +137,7 @@ def _extract_product_variant(product: dict[str, Any]) -> str | None:
                     for kw in ("milk", "dairy", "yogurt", "cheese", "cream", "butter")
                 ):
                     return f"{fat_val:g}%"
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
     return None

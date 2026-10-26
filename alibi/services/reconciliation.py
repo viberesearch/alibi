@@ -47,7 +47,7 @@ def _has_payment(payments_json: str | None, bundle_types: str | None) -> bool:
         try:
             data = json.loads(payments_json)
             return bool(data)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return False
     return False
 
@@ -64,7 +64,7 @@ def _sum_payments(payments_json: str | None) -> float | None:
         return None
     try:
         data = json.loads(payments_json)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
     if not isinstance(data, list):
         return None
@@ -76,7 +76,7 @@ def _sum_payments(payments_json: str | None) -> float | None:
         try:
             total += float(entry["amount"])
             seen = True
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return total if seen else None
 
@@ -87,7 +87,7 @@ def _mismatch(a: float | None, b: float | None) -> bool:
         return False
     try:
         fa, fb = float(a), float(b)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     return abs(fa - fb) > max(0.02, 0.05 * max(abs(fa), abs(fb)))
 

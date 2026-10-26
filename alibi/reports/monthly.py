@@ -375,7 +375,7 @@ class ReportGenerator:
             if row[3]:
                 try:
                     expires = date.fromisoformat(row[3])
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
             result.append(

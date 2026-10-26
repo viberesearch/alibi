@@ -18,7 +18,7 @@ def _f(value: object) -> float:
     """Coerce an API numeric (Decimal serialised as str) to float."""
     try:
         return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0
 
 

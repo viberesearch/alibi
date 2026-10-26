@@ -162,7 +162,7 @@ def _coerce(kind: str, value: Any) -> Any:
     if kind == "num":
         try:
             return float(str(value).replace(",", "."))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
     s = str(value).strip()
     return s.lower() if s else None
@@ -194,7 +194,7 @@ def _clean_pack_count(value: Any) -> int | None:
         return None
     try:
         n = int(float(str(value)))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
     return n if 1 < n <= 1000 else None
 
@@ -215,7 +215,7 @@ def _dec(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
 
 

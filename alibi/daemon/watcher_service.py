@@ -567,7 +567,7 @@ class WatcherDaemon:
             # Check if process is running
             os.kill(pid, 0)
             return DaemonStatus(running=True, pid=pid)
-        except (ValueError, OSError, ProcessLookupError):
+        except ValueError, OSError, ProcessLookupError:
             # PID file exists but process is not running
             return None
 
@@ -592,7 +592,7 @@ class WatcherDaemon:
                 except ProcessLookupError:
                     break
             return True
-        except (ValueError, OSError, ProcessLookupError):
+        except ValueError, OSError, ProcessLookupError:
             return False
 
 

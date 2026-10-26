@@ -415,7 +415,7 @@ class MyceliumWatcher:
             pid = int(MYCELIUM_PID_FILE.read_text().strip())
             os.kill(pid, 0)  # Check if process exists
             return MyceliumStatus(running=True, pid=pid)
-        except (ValueError, OSError, ProcessLookupError):
+        except ValueError, OSError, ProcessLookupError:
             return None
 
     @staticmethod
@@ -438,5 +438,5 @@ class MyceliumWatcher:
                 except ProcessLookupError:
                     break
             return True
-        except (ValueError, OSError, ProcessLookupError):
+        except ValueError, OSError, ProcessLookupError:
             return False

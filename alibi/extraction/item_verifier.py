@@ -117,7 +117,7 @@ def _to_decimal(value: Any) -> Decimal | None:
     try:
         s = str(value).replace(",", ".")
         return Decimal(s)
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
 
 
@@ -336,7 +336,7 @@ def _validate_item_math(
                         )
                         result.items_corrected += 1
                         return
-            except (InvalidOperation, ValueError):
+            except InvalidOperation, ValueError:
                 pass
 
     # Try numbers in the name as candidate quantity
@@ -916,7 +916,7 @@ def validate_barcode_items(
 
         try:
             product = json.loads(row["data"])
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             continue
 
         if product.get("_not_found"):

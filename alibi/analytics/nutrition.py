@@ -67,7 +67,7 @@ def _parse_nutriments(data: dict[str, Any]) -> dict[str, float]:
         if val is not None:
             try:
                 result[our_key] = float(val)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 pass
     return result
 
@@ -198,7 +198,7 @@ GROUP BY f.event_date
     for row in rows:
         try:
             product = json.loads(row["product_data"])
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             logger.debug(
                 "Skipping unparseable product_cache entry for %s", row["barcode"]
             )
@@ -344,7 +344,7 @@ WHERE fi.id = ?
 
     try:
         product = json.loads(row["product_data"])
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
 
     if product.get("_not_found"):
@@ -402,7 +402,7 @@ def nutrition_by_category(
     for row in rows:
         try:
             product = json.loads(row["product_data"])
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             continue
 
         if product.get("_not_found"):

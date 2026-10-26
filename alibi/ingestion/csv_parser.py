@@ -304,7 +304,7 @@ class RevolutCSVParser(BaseCSVParser):
             try:
                 txn = self._parse_row(row)
                 transactions.append(txn)
-            except (ValueError, KeyError):
+            except ValueError, KeyError:
                 continue
 
         return transactions
@@ -440,7 +440,7 @@ class GenericCSVParser(BaseCSVParser):
                     vendor=description if description else None,
                 )
                 transactions.append(txn)
-            except (ValueError, KeyError):
+            except ValueError, KeyError:
                 continue
 
         return transactions
@@ -489,7 +489,7 @@ def detect_csv_format(file_path: Path | str) -> CSVFormat:
         with path.open(encoding="utf-8") as f:
             reader = csv.reader(f)
             headers = next(reader, [])
-    except (OSError, csv.Error):
+    except OSError, csv.Error:
         return CSVFormat.UNKNOWN
 
     headers_lower = [h.lower().strip() for h in headers]
